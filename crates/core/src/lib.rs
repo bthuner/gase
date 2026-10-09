@@ -10,6 +10,7 @@
 //! and adds what belongs to the console itself: the memory maps
 //! ([`bus`]), the cartridge ([`cartridge`]), the controller ports ([`io`]),
 //! and the scheduler that runs everything in step ([`system`]).
+//! [`debug`] adds breakpoints and single-stepping for debuggers.
 //!
 //! The crate has no dependencies outside the workspace and no I/O of its
 //! own: frontends feed it ROM bytes and button states, and receive frames
@@ -38,4 +39,5 @@ pub use cartridge::{Cartridge, LoadError};
 pub use gase_vdp::{MAX_HEIGHT, MAX_WIDTH, VideoStandard};
 pub use io::{Buttons, Device, Region};
 pub use rewind::Rewind;
+pub use system::debug::{self, Debugger, Stop};
 pub use system::{Config, Frame, Genesis, StateError};

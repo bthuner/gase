@@ -21,6 +21,8 @@
 //! all software, because the CPUs only interact through shared memory and
 //! interrupts at well-defined points.
 
+pub mod debug;
+
 use gase_m68k::M68k;
 use gase_savestate::{Reader, State, Writer};
 use gase_sound::{DcBlocker, LowPass, Psg, Resampler, Ym2612};

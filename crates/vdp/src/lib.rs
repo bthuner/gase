@@ -194,6 +194,13 @@ impl Vdp {
         (self.frame_width, self.frame_height)
     }
 
+    /// CRAM entry `index` (0-63) as `0x00RRGGBB` at normal intensity, exactly
+    /// as the renderer outputs it. For debuggers (palette and tile viewers).
+    #[must_use]
+    pub fn cram_rgb(&self, index: usize) -> u32 {
+        self.palette.get(index as u8, color::Intensity::Normal)
+    }
+
     /// Is the 40-cell (320 pixel) horizontal mode selected? Otherwise 32 cells.
     #[must_use]
     pub fn h40(&self) -> bool {
@@ -300,5 +307,21 @@ impl State for Vdp {
         self.sat_cache.load(r)?;
         self.palette.rebuild(&self.cram);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cram_rgb_follows_cram_writes() {
+        let mut vdp = Vdp::new(VideoStandard::Ntsc);
+        vdp.write_control(0x8F02); // auto-increment 2
+        vdp.write_control(0xC002); // CRAM write, address 2 (entry 1)
+        vdp.write_control(0x0000);
+        vdp.write_data(0x000E); // red
+        assert_eq!(vdp.cram_rgb(1), 0xFF0000);
+        assert_eq!(vdp.cram_rgb(0), 0x000000);
     }
 }
