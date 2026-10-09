@@ -8,7 +8,8 @@
 //! * [`gase_sound`]: the YM2612 FM synthesiser and the SN76489 PSG,
 //!
 //! and adds what belongs to the console itself: the memory maps
-//! ([`bus`]), the cartridge ([`cartridge`]), the controller ports ([`io`]),
+//! ([`bus`]), the cartridge ([`cartridge`]) and its save EEPROM
+//! ([`eeprom`]), the controller ports ([`io`]),
 //! and the scheduler that runs everything in step ([`system`]).
 //!
 //! The crate has no dependencies outside the workspace and no I/O of its
@@ -30,6 +31,7 @@
 pub mod audio;
 pub mod bus;
 pub mod cartridge;
+pub mod eeprom;
 pub mod io;
 pub mod rewind;
 pub mod system;
