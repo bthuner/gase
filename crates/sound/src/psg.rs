@@ -203,21 +203,39 @@ impl Psg {
     /// one YM2612 channel: ±2048 per channel at full volume.
     #[must_use]
     pub fn output(&self) -> i32 {
+        if self.muted != 0 {
+            return self.output_muted();
+        }
         let mut sum = 0;
         for i in 0..3 {
-            if self.muted & (1 << i) != 0 {
-                continue;
-            }
             let volume = VOLUME[usize::from(self.attenuation[i])];
             // Periods 0/1 are ultrasonic: treat as a constant high level.
             let high = self.tone[i] <= 1 || self.flip_flops[i];
             sum += if high { volume } else { -volume };
         }
-        if self.muted & 0x08 != 0 {
-            return sum;
-        }
         let volume = VOLUME[usize::from(self.attenuation[3])];
         sum + if self.lfsr & 1 != 0 { volume } else { -volume }
+    }
+
+    /// [`Psg::output`] with some channels muted, kept out of line so the
+    /// normal path stays as fast as before.
+    #[cold]
+    #[inline(never)]
+    fn output_muted(&self) -> i32 {
+        let mut sum = 0;
+        for i in 0..4 {
+            if self.muted & (1 << i) != 0 {
+                continue;
+            }
+            let volume = VOLUME[usize::from(self.attenuation[i])];
+            let high = if i == 3 {
+                self.lfsr & 1 != 0
+            } else {
+                self.tone[i] <= 1 || self.flip_flops[i]
+            };
+            sum += if high { volume } else { -volume };
+        }
+        sum
     }
 }
 

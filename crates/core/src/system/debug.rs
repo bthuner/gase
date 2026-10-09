@@ -13,9 +13,11 @@
 //! loop, written as a resumable state machine: it remembers which scanline
 //! the console is in and which event of that line (vertical interrupt,
 //! horizontal blanking, end of line) comes next. Its steps are exactly the
-//! ones `run_frame` performs, in the same order, so a frame run through the
-//! debugger is bit-for-bit identical to a frame run normally (the tests
-//! check this by comparing save states).
+//! ones `run_frame` performs, in the same order, and instructions run
+//! through the same `run_until` — one at a time when a breakpoint or a step
+//! needs it, a whole stretch to the next event otherwise. A frame run
+//! through the debugger is therefore bit-for-bit identical to a frame run
+//! normally (the tests check this by comparing save states).
 //!
 //! While the debugger has stopped the console mid-frame
 //! ([`Debugger::in_frame`]), keep using the debugger to run it until the
@@ -174,7 +176,8 @@ impl Debugger {
     }
 
     /// The resumable frame loop. It must perform the same steps, in the
-    /// same order, as [`Genesis::run_frame`] and `Genesis::run_until`.
+    /// same order, as [`Genesis::run_frame`]. Instructions are executed by
+    /// the same `Genesis::run_until` the normal loop uses.
     fn advance(&mut self, g: &mut Genesis, goal: Goal) -> Stop {
         let mut executed = 0u32;
         loop {
@@ -206,18 +209,24 @@ impl Debugger {
             };
 
             while g.m68k_clock < target {
+                if goal != Goal::Instruction && self.breakpoints.is_empty() {
+                    // Nothing can stop us before the event: run at full speed.
+                    g.run_until(target);
+                    executed += 1;
+                    break;
+                }
                 if executed > 0 {
                     if goal == Goal::Instruction {
                         return Stop::Stepped;
                     }
-                    if !self.breakpoints.is_empty() {
-                        let pc = g.m68k.pc() & 0xFF_FFFF;
-                        if self.breakpoints.contains(&pc) {
-                            return Stop::Breakpoint(pc);
-                        }
+                    let pc = g.m68k.pc() & 0xFF_FFFF;
+                    if self.breakpoints.contains(&pc) {
+                        return Stop::Breakpoint(pc);
                     }
                 }
-                step_68k(g);
+                // Every instruction takes at least 4 cycles, so this runs
+                // exactly one, through the same code as `run_frame`.
+                g.run_until(g.m68k_clock + 1);
                 executed += 1;
             }
 
@@ -257,24 +266,6 @@ impl Debugger {
             }
         }
     }
-}
-
-/// One iteration of `Genesis::run_until`: a 68000 instruction, any DMA it
-/// started, and the Z80 catching up.
-fn step_68k(g: &mut Genesis) {
-    g.hw.now = g.m68k_clock;
-    g.m68k.set_interrupt_level(g.hw.vdp.interrupt_level());
-    if g.trace_remaining > 0 {
-        g.trace_instruction();
-    }
-    let mut cycles = g.m68k.step(&mut g.hw);
-    cycles += std::mem::take(&mut g.hw.m68k_wait);
-    if g.hw.vdp.dma_68k_pending() {
-        cycles += g.run_dma();
-    }
-    g.hw.reset_requested = false;
-    g.m68k_clock += u64::from(cycles) * 7;
-    g.run_z80_until(g.m68k_clock);
 }
 
 /// Inspection helpers for debuggers. None of them changes the console.

@@ -521,6 +521,7 @@ impl Ym2612 {
             [(f[0], b[0]), (f[1], b[1]), (f[2], b[2])]
         });
         let (mut left, mut right) = (0i32, 0i32);
+        let mut mix = [(0i32, 0i32); 6];
         for (i, ch) in self.channels.iter_mut().enumerate() {
             ch.refresh_frequency(if i == 2 { special.as_ref() } else { None }, lfo_pm);
             for op in &mut ch.ops {
@@ -530,9 +531,6 @@ impl Ym2612 {
             if i == 5 && self.dac_enabled {
                 // 8-bit unsigned DAC sample → 9-bit signed (LSB = 0).
                 out = (i32::from(self.dac_data) - 128) << 1;
-            }
-            if self.muted & (1 << i) != 0 {
-                continue;
             }
             let (l, r) = if self.ladder {
                 // Ladder effect: see the module documentation.
@@ -553,6 +551,17 @@ impl Ym2612 {
             };
             left += l;
             right += r;
+            mix[i] = (l, r);
+        }
+        if self.muted != 0 {
+            // Take the muted channels back out of the mix (rarely used, so
+            // this costs nothing in the normal case).
+            for (i, (l, r)) in mix.iter().enumerate() {
+                if self.muted & (1 << i) != 0 {
+                    left -= l;
+                    right -= r;
+                }
+            }
         }
 
         self.clock_lfo();
