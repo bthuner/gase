@@ -232,8 +232,8 @@ pub(crate) enum Operand {
     Data(u8),
     Addr(u8),
     Mem(u32),
-    /// `(An)+`: memory at the address. Reading performs the increment (even
-    /// if the read then faults); writing does not, so a read-modify-write
+    /// `(An)+`: memory at the address. Reading performs the increment (for
+    /// bytes and words even if the read then faults); writing does not, so a read-modify-write
     /// increments once. `MOVE` increments after its write, so a faulting
     /// `MOVE` destination leaves `An` untouched.
     PostInc(u8, u32),
@@ -245,6 +245,19 @@ impl M68k {
     #[inline]
     fn step_size(reg: u8, size: Size) -> u32 {
         if reg == 7 && size == Size::Byte { 2 } else { size.bytes() }
+    }
+
+    /// The PC an address error stacks is the microcode's PC register, which
+    /// does not move in lockstep with the prefetch queue: for displacement
+    /// and indexed modes it has not yet been advanced past the extension
+    /// word, and for `-(An)` it is advanced early (except for longs). This
+    /// gives the offset from our `pc` (the address of the word in IRC).
+    pub(crate) fn fault_pc_bias(mode: Mode, size: Size) -> i32 {
+        match mode {
+            Mode::Disp | Mode::Index | Mode::PcDisp | Mode::PcIndex => -2,
+            Mode::PreDec if size != Size::Long => 2,
+            _ => 0,
+        }
     }
 
     /// Increment `An` after a `(An)+` access.
@@ -277,6 +290,10 @@ impl M68k {
     /// cycles of the address calculation.
     #[inline]
     pub(crate) fn resolve<B: Bus>(&mut self, bus: &mut B, ea: Ea, size: Size) -> Operand {
+        self.fault_pc_bias = Self::fault_pc_bias(ea.mode, size);
+        // PC-relative operands are read in program space (function code
+        // 2/6), which shows in an address error's status word.
+        self.program_space = matches!(ea.mode, Mode::PcDisp | Mode::PcIndex);
         match ea.mode {
             Mode::DataReg => Operand::Data(ea.reg),
             Mode::AddrReg => Operand::Addr(ea.reg),
@@ -341,6 +358,12 @@ impl M68k {
             Operand::Data(r) => self.d[r as usize] & size.mask(),
             Operand::Addr(r) => self.a[r as usize] & size.mask(),
             Operand::Mem(addr) => self.read_sized(bus, addr, size)?,
+            Operand::PostInc(reg, addr) if size == Size::Long => {
+                // A long is two word reads; An is updated after the second.
+                let value = self.read_long(bus, addr)?;
+                self.post_increment(reg, size);
+                value
+            }
             Operand::PostInc(reg, addr) => {
                 self.post_increment(reg, size);
                 self.read_sized(bus, addr, size)?

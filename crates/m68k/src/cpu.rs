@@ -78,6 +78,12 @@ pub struct M68k {
     pub(crate) instruction_pc: u32,
     /// Set while stacking an address error frame, to detect double faults.
     pub(crate) in_group0: bool,
+    /// Where the microcode's own PC register stands relative to `pc` during
+    /// the current memory operand access; an address error stacks
+    /// `pc + fault_pc_bias`. See `ea.rs`.
+    pub(crate) fault_pc_bias: i32,
+    /// The current operand is a PC-relative (program space) read.
+    pub(crate) program_space: bool,
 
     table: &'static DecodeTable,
 }
@@ -131,6 +137,8 @@ impl M68k {
             cycles: 0,
             instruction_pc: 0,
             in_group0: false,
+            fault_pc_bias: 0,
+            program_space: false,
             table: DecodeTable::get(),
         }
     }
@@ -363,10 +371,11 @@ impl M68k {
     /// An address error for a data access at `address`.
     #[cold]
     fn odd_access(&self, address: u32, access: Access) -> Exception {
+        let access = if access == Access::Read && self.program_space { Access::ProgramRead } else { access };
         Exception::AddressError(AddressFault {
             address,
             access,
-            pc: self.pc.wrapping_add(2),
+            pc: self.pc.wrapping_add_signed(self.fault_pc_bias),
         })
     }
 
@@ -579,6 +588,8 @@ impl M68k {
         }
 
         let tracing = self.trace;
+        self.fault_pc_bias = 0;
+        self.program_space = false;
         let opcode = self.ir;
         self.ird = opcode;
         self.instruction_pc = self.pc();

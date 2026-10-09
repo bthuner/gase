@@ -49,6 +49,7 @@ impl M68k {
                 // overlapped with the prefetch, which therefore comes first.
                 self.set_logic_flags(value, i.size);
                 self.prefetch(bus);
+                self.fault_pc_bias = 0;
                 let reg = i.dst.reg;
                 if i.size == Size::Long {
                     // Written low word first, so a fault reports An - 2.
@@ -61,8 +62,26 @@ impl M68k {
                     self.write_sized(bus, addr, i.size, value)?;
                 }
             }
+            Mode::AbsLong if i.src.is_memory() => {
+                // A quirk of MOVE <memory>,(xxx).L: the low address word is
+                // used straight from IRC and only replaced *after* the write.
+                let high = self.read_ext(bus);
+                let addr = u32::from(high) << 16 | u32::from(self.irc);
+                self.fault_pc_bias = 0;
+                self.set_logic_flags(value, i.size);
+                self.write_sized(bus, addr, i.size, value)?;
+                self.read_ext(bus);
+                self.prefetch(bus);
+            }
             _ => {
                 let dst = self.resolve(bus, i.dst, i.size);
+                // (The microcode's PC runs ahead differently for a MOVE
+                // destination than for a source; see `fault_pc_bias`.)
+                self.fault_pc_bias = if let Operand::Mem(_) | Operand::PostInc(..) = dst {
+                    if matches!(i.dst.mode, Mode::Indirect | Mode::PostInc) { 2 } else { 0 }
+                } else {
+                    0
+                };
                 self.set_logic_flags(value, i.size);
                 self.write_operand(bus, dst, i.size, value)?;
                 if let Operand::PostInc(reg, _) = dst {

@@ -58,6 +58,8 @@ pub(crate) mod vector {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Access {
     Read,
+    /// A PC-relative operand read (program space, but within an instruction).
+    ProgramRead,
     Write,
     /// An instruction fetch after a change of flow (jump, branch, return).
     Fetch,
@@ -152,7 +154,7 @@ impl M68k {
         self.in_group0 = true;
         let sr = self.enter_supervisor();
         let function_code = if sr & 0x2000 != 0 { 4 } else { 0 }
-            | if fault.access == Access::Fetch { 2 } else { 1 };
+            | if matches!(fault.access, Access::Fetch | Access::ProgramRead) { 2 } else { 1 };
         let status = (self.ird & !0x1F)
             | if fault.access == Access::Write { 0 } else { 0x10 }
             | if fault.access == Access::Fetch { 0x08 } else { 0 }
