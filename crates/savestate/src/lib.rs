@@ -271,7 +271,10 @@ mod tests {
         c.load(&mut r).unwrap();
         d.load(&mut r).unwrap();
         e.load(&mut r).unwrap();
-        assert_eq!((a, b, c, d, e), (0xDEAD_BEEF, -5, true, [1, 2, 3], vec![7; 4]));
+        assert_eq!(
+            (a, b, c, d, e),
+            (0xDEAD_BEEF, -5, true, [1, 2, 3], vec![7; 4])
+        );
         assert_eq!(r.remaining(), 0);
     }
 
@@ -287,6 +290,9 @@ mod tests {
         vec![0u8; 3].save(&mut w);
         let bytes = w.into_bytes();
         let mut v = vec![0u8; 4];
-        assert_eq!(v.load(&mut Reader::new(&bytes)), Err(Error::Invalid("buffer length")));
+        assert_eq!(
+            v.load(&mut Reader::new(&bytes)),
+            Err(Error::Invalid("buffer length"))
+        );
     }
 }
