@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Théo Hunerblaes"]
+repository = "https://github.com/bthuner/gase"
+rust-version = "1.85"
+
+[workspace.dependencies]
+gase-savestate = { path = "crates/savestate" }
+gase-m68k = { path = "crates/m68k" }
+gase-z80 = { path = "crates/z80" }
+gase-sound = { path = "crates/sound" }
+gase-core = { path = "crates/core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Emulators are full of deliberate integer truncation; these lints are noise here.
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+too_many_lines = "allow"
+module_name_repetitions = "allow"
+
+# Emulation in a debug build is unbearably slow; optimise even dev builds a bit.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
+
+# `cargo test --profile fast-test` for running the big CPU test-vector suites.
+[profile.fast-test]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = false

@@ -1,0 +1,16 @@
+[package]
+name = "gase-core"
+description = "Sega Mega Drive / Genesis system emulation: bus, VDP, I/O, cartridge, scheduling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gase-savestate.workspace = true
+gase-m68k.workspace = true
+gase-z80.workspace = true
+gase-sound.workspace = true
+
+[lints]
+workspace = true

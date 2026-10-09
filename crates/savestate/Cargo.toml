@@ -1,0 +1,10 @@
+[package]
+name = "gase-savestate"
+description = "Tiny dependency-free binary serialisation used for gase save states"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
