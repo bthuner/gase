@@ -85,6 +85,11 @@ pub struct M68k {
     /// The current operand is a PC-relative (program space) read.
     pub(crate) program_space: bool,
 
+    /// Host setting (not part of the save state): when false, word and long
+    /// data accesses at odd addresses ignore address bit 0 instead of raising
+    /// an address error. See [`M68k::set_address_errors`].
+    address_errors: bool,
+
     table: &'static DecodeTable,
 }
 
@@ -139,6 +144,7 @@ impl M68k {
             in_group0: false,
             fault_pc_bias: 0,
             program_space: false,
+            address_errors: true,
             table: DecodeTable::get(),
         }
     }
@@ -290,6 +296,28 @@ impl M68k {
         self.run_state == RunState::Stopped
     }
 
+    /// Choose whether odd word/long data accesses raise address errors.
+    ///
+    /// A real 68000 cannot perform a word access at an odd address: its bus
+    /// has no address line A0, only "upper byte" and "lower byte" strobes. It
+    /// raises an *address error* exception instead, and software that does
+    /// this by mistake crashes on real hardware.
+    ///
+    /// Several popular emulators do not model this and silently ignore bit 0,
+    /// so a little homebrew software (often from buggy compilers) only works
+    /// there. Passing `false` mimics that lenient behaviour for data
+    /// accesses. Jumps to odd addresses still fault, as they do in those
+    /// emulators' cores too. The default, `true`, matches the hardware.
+    pub fn set_address_errors(&mut self, enabled: bool) {
+        self.address_errors = enabled;
+    }
+
+    /// Do odd word/long data accesses raise address errors?
+    #[must_use]
+    pub fn address_errors(&self) -> bool {
+        self.address_errors
+    }
+
     /// Has the CPU halted after a double bus fault?
     #[must_use]
     pub fn is_halted(&self) -> bool {
@@ -400,11 +428,11 @@ impl M68k {
 
     #[inline]
     pub(crate) fn read_word<B: Bus>(&mut self, bus: &mut B, addr: u32) -> Exec<u16> {
-        if addr & 1 != 0 {
+        if addr & 1 != 0 && self.address_errors {
             return Err(self.odd_access(addr, Access::Read));
         }
         self.cycles += 4;
-        Ok(bus.read_word(addr & ADDRESS_MASK))
+        Ok(bus.read_word(addr & ADDRESS_MASK & !1))
     }
 
     /// Long accesses are two word accesses, high word first.
@@ -423,11 +451,11 @@ impl M68k {
 
     #[inline]
     pub(crate) fn write_word<B: Bus>(&mut self, bus: &mut B, addr: u32, value: u16) -> Exec {
-        if addr & 1 != 0 {
+        if addr & 1 != 0 && self.address_errors {
             return Err(self.odd_access(addr, Access::Write));
         }
         self.cycles += 4;
-        bus.write_word(addr & ADDRESS_MASK, value);
+        bus.write_word(addr & ADDRESS_MASK & !1, value);
         Ok(())
     }
 
