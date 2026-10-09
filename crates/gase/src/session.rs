@@ -93,6 +93,7 @@ impl Session {
         self.sibling(".srm")
     }
 
+    #[cfg_attr(not(feature = "sdl"), allow(dead_code))] // used by the window frontend only
     pub fn state_path(&self, slot: u8) -> PathBuf {
         self.sibling(&format!(".state{slot}"))
     }
@@ -121,6 +122,7 @@ impl Session {
         }
     }
 
+    #[cfg_attr(not(feature = "sdl"), allow(dead_code))] // used by the window frontend only
     pub fn save_state(&self, slot: u8) -> Result<PathBuf, String> {
         let path = self.state_path(slot);
         fs::write(&path, self.genesis.save_state())
@@ -128,6 +130,7 @@ impl Session {
         Ok(path)
     }
 
+    #[cfg_attr(not(feature = "sdl"), allow(dead_code))] // used by the window frontend only
     pub fn load_state(&mut self, slot: u8) -> Result<PathBuf, String> {
         let path = self.state_path(slot);
         let data = fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
