@@ -51,6 +51,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gase-vdp"
+version = "0.1.0"
+dependencies = [
+ "gase-savestate",
+]
+
+[[package]]
 name = "gase-z80"
 version = "0.1.0"
 dependencies = [
