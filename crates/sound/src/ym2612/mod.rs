@@ -235,6 +235,10 @@ pub struct Ym2612 {
 
     // --- host settings (not saved) -------------------------------------------
     ladder: bool,
+    /// Channels silenced by the host (bit 0 = channel 1), for listening to
+    /// channels one at a time. The channels still run; only the mix skips
+    /// them.
+    muted: u8,
 }
 
 gase_savestate::impl_state!(Ym2612 {
@@ -304,14 +308,31 @@ impl Ym2612 {
             dac_enabled: false,
             dac_data: 0x80,
             ladder: true,
+            muted: 0,
         }
     }
 
-    /// Reset the chip (the `/IC` pin). The ladder-effect setting is kept.
+    /// Reset the chip (the `/IC` pin). The ladder-effect and mute settings
+    /// are kept.
     pub fn reset(&mut self) {
-        let ladder = self.ladder;
+        let (ladder, muted) = (self.ladder, self.muted);
         *self = Self::new();
         self.ladder = ladder;
+        self.muted = muted;
+    }
+
+    /// Silence channels in the output mix: bit 0 mutes channel 1 ... bit 5
+    /// channel 6 (including the DAC). A host setting for learning and
+    /// debugging, not a chip feature: muted channels keep running and come
+    /// back exactly in step.
+    pub fn set_muted_channels(&mut self, mask: u8) {
+        self.muted = mask & 0x3F;
+    }
+
+    /// The mask set with [`Ym2612::set_muted_channels`].
+    #[must_use]
+    pub fn muted_channels(&self) -> u8 {
+        self.muted
     }
 
     /// Enable or disable emulation of the discrete YM2612's DAC distortion
@@ -509,6 +530,9 @@ impl Ym2612 {
             if i == 5 && self.dac_enabled {
                 // 8-bit unsigned DAC sample → 9-bit signed (LSB = 0).
                 out = (i32::from(self.dac_data) - 128) << 1;
+            }
+            if self.muted & (1 << i) != 0 {
+                continue;
             }
             let (l, r) = if self.ladder {
                 // Ladder effect: see the module documentation.
