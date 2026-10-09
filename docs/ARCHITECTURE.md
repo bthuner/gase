@@ -64,7 +64,7 @@ NTSC consoles).
 |---|---|---|
 | 68000 | ÷7 | CPU cycles × 7 = master clocks |
 | Z80 | ÷15 | T-states × 15 |
-| VDP | 3420 per scanline | lines |
+| VDP | 3420 per scanline | lines; access slots in master clocks within a line |
 | YM2612 | ÷7, one sample per 144 cycles | 1008 master clocks per sample |
 | PSG | ÷15, ticks every 16 cycles | 240 master clocks per tick |
 
@@ -86,9 +86,22 @@ Sound chips are updated **lazily**: they only run when a CPU writes to them
 The VDP (`crates/vdp`) is driven entirely through two ports: a control port
 for registers and addresses and a data port for memory contents. Games
 mostly use **DMA** to copy graphics from the 68000's memory into VRAM.
-Because only the system bus can read 68000 memory, the VDP flags a pending
-DMA and the scheduler performs it, charging the 68000 for the time it is
-frozen.
+
+The VDP is busy reading VRAM to draw the picture, so outside writes can only
+happen in a few **access slots** per line: 18 in active H40 display, 205
+when the VDP is not drawing (vertical blanking, or display turned off).
+Data-port writes wait in a 4-entry **FIFO** for their slot; a fifth write
+stalls the 68000. A 68000-to-VDP DMA pushes words through the same FIFO and
+freezes the 68000 until it is done; fills and copies run in the background
+while status bit 1 (DMA busy) is set. This is why games upload graphics
+during vertical blanking or with the display off: the same transfer is
+about eleven times faster there.
+
+The VDP's memory side is caught up lazily like the sound chips:
+`Vdp::advance` uses the slots up to the current time before every port
+access and at the end of each line. While a 68000 DMA runs, the scheduler
+stops executing 68000 instructions and just lets the VDP progress up to the
+next line event (see `crates/vdp/src/dma.rs` and `Genesis::run_until`).
 
 Rendering happens one scanline at a time into a 32-bit frame buffer.
 Each line composites plane B, plane A/window and sprites by priority —
