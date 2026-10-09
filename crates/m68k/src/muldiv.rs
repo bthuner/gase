@@ -62,11 +62,6 @@ fn divs_cycles(dividend: i32, divisor: i16) -> u32 {
         return (micro_cycles + 2) * 2;
     }
     let mut quotient = abs_dividend / abs_divisor;
-    let negative = (dividend < 0) != (divisor < 0);
-    if quotient > 0x7FFF && !(negative && quotient == 0x8000) {
-        // The first quotient bit already shows a signed overflow.
-        return (micro_cycles + 2) * 2;
-    }
     micro_cycles += 55;
     if divisor >= 0 {
         if dividend >= 0 {
@@ -121,9 +116,10 @@ impl M68k {
         self.exception(bus, vector::ZERO_DIVIDE, pc)
     }
 
-    /// Quotient does not fit: V set, C cleared, destination untouched (N and
-    /// Z keep their old values).
+    /// Quotient does not fit: destination untouched, flags N and V set.
     fn divide_overflow(&mut self) {
+        self.n = true;
+        self.z = false;
         self.v = true;
         self.c = false;
     }

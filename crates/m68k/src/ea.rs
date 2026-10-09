@@ -291,9 +291,7 @@ impl M68k {
     #[inline]
     pub(crate) fn resolve<B: Bus>(&mut self, bus: &mut B, ea: Ea, size: Size) -> Operand {
         self.fault_pc_bias = Self::fault_pc_bias(ea.mode, size);
-        // PC-relative operands are read in program space (function code
-        // 2/6), which shows in an address error's status word.
-        self.program_space = matches!(ea.mode, Mode::PcDisp | Mode::PcIndex);
+        self.program_space = false;
         match ea.mode {
             Mode::DataReg => Operand::Data(ea.reg),
             Mode::AddrReg => Operand::Addr(ea.reg),
@@ -317,6 +315,9 @@ impl M68k {
     #[inline]
     pub(crate) fn control_address<B: Bus>(&mut self, bus: &mut B, ea: Ea) -> u32 {
         let r = ea.reg as usize;
+        // PC-relative operands are read in program space (function code
+        // 2/6), which shows in an address error's status word.
+        self.program_space = matches!(ea.mode, Mode::PcDisp | Mode::PcIndex);
         match ea.mode {
             Mode::Indirect => self.a[r],
             Mode::Disp => {

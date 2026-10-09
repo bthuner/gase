@@ -19,9 +19,10 @@
 //! ```text
 //!  SP+0   special status word: ...........R I FFF
 //!         R = 1 for a read, I = 1 if not executing an instruction
-//!         (e.g. fetching from a jump target), FFF = function code
+//!         (never set by address errors), FFF = function code (5 for
+//!         supervisor data, 6 for supervisor program, 1/2 for user)
 //!  SP+2   access address (32 bits)
-//!  SP+6   instruction register (the opcode being executed)
+//!  SP+6   instruction register (normally the opcode being executed)
 //!  SP+8   SR
 //!  SP+10  PC (32 bits)
 //! ```
@@ -155,9 +156,11 @@ impl M68k {
         let sr = self.enter_supervisor();
         let function_code = if sr & 0x2000 != 0 { 4 } else { 0 }
             | if matches!(fault.access, Access::Fetch | Access::ProgramRead) { 2 } else { 1 };
-        let status = (self.ird & !0x1F)
+        // The stacked instruction register is the real IR: if the faulting
+        // instruction had already prefetched, that is the *next* opcode.
+        let ir = self.ir;
+        let status = (ir & !0x1F)
             | if fault.access == Access::Write { 0 } else { 0x10 }
-            | if fault.access == Access::Fetch { 0x08 } else { 0 }
             | function_code;
         // The aborted bus cycle still takes its 4 cycles, then 8 more pass
         // before the frame is written.
@@ -169,7 +172,7 @@ impl M68k {
             self.write_word(bus, at(12), fault.pc as u16)?;
             self.write_word(bus, at(8), sr)?;
             self.write_word(bus, at(10), (fault.pc >> 16) as u16)?;
-            self.write_word(bus, at(6), self.ird)?;
+            self.write_word(bus, at(6), ir)?;
             self.write_word(bus, at(4), fault.address as u16)?;
             self.write_word(bus, at(0), status)?;
             self.write_word(bus, at(2), (fault.address >> 16) as u16)?;

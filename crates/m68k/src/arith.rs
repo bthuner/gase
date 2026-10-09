@@ -188,11 +188,31 @@ impl M68k {
 
     /// `CMPM (Ay)+,(Ax)+`: compare two memory blocks element by element.
     pub(crate) fn op_cmpm<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
-        let s = self.read_ea(bus, i.src, i.size)?;
-        let d = self.read_ea(bus, i.dst, i.size)?;
+        self.fault_pc_bias = 2;
+        let s = self.read_cmpm_source(bus, i.src.reg, i.size)?;
+        // The destination register is only advanced once its read succeeds.
+        let d = self.read_sized(bus, self.a[i.dst.reg as usize], i.size)?;
+        self.post_increment(i.dst.reg, i.size);
         self.compare(d, s, i.size);
         self.prefetch(bus);
         Ok(())
+    }
+
+    /// CMPM's source `(An)+` read advances `An` a word at a time, so a long
+    /// that faults on its first word still moves `An` by 2.
+    fn read_cmpm_source<B: Bus>(&mut self, bus: &mut B, reg: u8, size: Size) -> Exec<u32> {
+        let r = reg as usize;
+        let addr = self.a[r];
+        if size == Size::Long {
+            self.a[r] = addr.wrapping_add(2);
+            let high = self.read_word(bus, addr)?;
+            self.a[r] = addr.wrapping_add(4);
+            let low = self.read_word(bus, addr.wrapping_add(2))?;
+            Ok(u32::from(high) << 16 | u32::from(low))
+        } else {
+            self.post_increment(reg, size);
+            self.read_sized(bus, addr, size)
+        }
     }
 
     /// ADDX/SUBX: `Dy,Dx` or `-(Ay),-(Ax)`, with X as carry-in.
@@ -215,6 +235,7 @@ impl M68k {
         } else {
             // Both operands are -(An): the decrement penalty is paid once.
             self.idle(2);
+            self.fault_pc_bias = 2;
             let s = self.read_predecrement(bus, i.src.reg, i.size)?;
             let d = self.read_predecrement(bus, i.dst.reg, i.size)?;
             let dst_addr = self.a[i.dst.reg as usize];
@@ -227,14 +248,14 @@ impl M68k {
     }
 
     /// Read a `-(An)` operand the way `ADDX`/`SUBX` do: a long is read low
-    /// word first, decrementing `An` by 2 before each word, so an odd `An`
-    /// faults at `An - 2` with `An` decremented by only 2.
+    /// word first, so an odd `An` faults at `An - 2` (leaving `An` as it
+    /// was).
     fn read_predecrement<B: Bus>(&mut self, bus: &mut B, reg: u8, size: Size) -> Exec<u32> {
         if size == Size::Long {
-            let low_addr = self.predecrement(reg, Size::Word);
-            let low = self.read_word(bus, low_addr)?;
-            let high_addr = self.predecrement(reg, Size::Word);
+            let high_addr = self.a[reg as usize].wrapping_sub(4);
+            let low = self.read_word(bus, high_addr.wrapping_add(2))?;
             let high = self.read_word(bus, high_addr)?;
+            self.a[reg as usize] = high_addr;
             Ok(u32::from(high) << 16 | u32::from(low))
         } else {
             let addr = self.predecrement(reg, size);

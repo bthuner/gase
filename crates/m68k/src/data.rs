@@ -47,17 +47,26 @@ impl M68k {
             Mode::PreDec => {
                 // No 2-cycle decrement penalty for MOVE: the decrement is
                 // overlapped with the prefetch, which therefore comes first.
-                self.set_logic_flags(value, i.size);
-                self.prefetch(bus);
                 self.fault_pc_bias = 0;
                 let reg = i.dst.reg;
                 if i.size == Size::Long {
-                    // Written low word first, so a fault reports An - 2.
-                    let low = self.predecrement(reg, Size::Word);
-                    self.write_word(bus, low, value as u16)?;
-                    let high = self.predecrement(reg, Size::Word);
-                    self.write_word(bus, high, (value >> 16) as u16)?;
+                    // The queue is refilled before the writes, but the new
+                    // opcode only moves into IR at the very end.
+                    let next_opcode = self.irc;
+                    self.pc = self.pc.wrapping_add(2);
+                    self.irc = self.fetch(bus, self.pc);
+                    self.set_move_flags(value, i);
+                    // Written low word first, so a fault reports An - 2 (with
+                    // An itself not yet updated).
+                    let high_addr = self.a[reg as usize].wrapping_sub(4);
+                    self.write_word(bus, high_addr.wrapping_add(2), value as u16)?;
+                    self.write_word(bus, high_addr, (value >> 16) as u16)?;
+                    self.a[reg as usize] = high_addr;
+                    self.set_logic_flags(value, Size::Long);
+                    self.ir = next_opcode;
                 } else {
+                    self.set_logic_flags(value, i.size);
+                    self.prefetch(bus);
                     let addr = self.predecrement(reg, i.size);
                     self.write_sized(bus, addr, i.size, value)?;
                 }
@@ -68,8 +77,9 @@ impl M68k {
                 let high = self.read_ext(bus);
                 let addr = u32::from(high) << 16 | u32::from(self.irc);
                 self.fault_pc_bias = 0;
-                self.set_logic_flags(value, i.size);
+                self.set_move_flags(value, i);
                 self.write_sized(bus, addr, i.size, value)?;
+                self.set_logic_flags(value, i.size);
                 self.read_ext(bus);
                 self.prefetch(bus);
             }
@@ -82,8 +92,9 @@ impl M68k {
                 } else {
                     0
                 };
-                self.set_logic_flags(value, i.size);
+                self.set_move_flags(value, i);
                 self.write_operand(bus, dst, i.size, value)?;
+                self.set_logic_flags(value, i.size);
                 if let Operand::PostInc(reg, _) = dst {
                     self.post_increment(reg, i.size);
                 }
@@ -91,6 +102,34 @@ impl M68k {
             }
         }
         Ok(())
+    }
+
+    /// Flags as they stand when MOVE starts writing its result, which is
+    /// only visible if that write faults. Bytes and words are tested before
+    /// the write. For longs it depends on how far the microcode has got,
+    /// which varies with both operands (the full flags are set once the
+    /// write succeeds):
+    ///
+    /// * from memory: only the low word has been tested for `(An)`, `(An)+`
+    ///   and `(xxx).L` destinations, the whole long otherwise;
+    /// * from a register or immediate: nothing yet for `(An)` and `(An)+`,
+    ///   N and Z only for `(d16,An)` and `(d8,An,Xn)`, everything otherwise.
+    fn set_move_flags(&mut self, value: u32, i: Instr) {
+        if i.size != Size::Long {
+            self.set_logic_flags(value, i.size);
+        } else if i.src.is_memory() {
+            if matches!(i.dst.mode, Mode::Indirect | Mode::PostInc | Mode::AbsLong) {
+                self.set_logic_flags(value & 0xFFFF, Size::Word);
+            } else {
+                self.set_logic_flags(value, Size::Long);
+            }
+        } else {
+            match i.dst.mode {
+                Mode::Indirect | Mode::PostInc => {}
+                Mode::Disp | Mode::Index => self.set_nz(value, Size::Long),
+                _ => self.set_logic_flags(value, Size::Long),
+            }
+        }
     }
 
     pub(crate) fn op_movea<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
@@ -118,6 +157,7 @@ impl M68k {
     pub(crate) fn op_movem_to_memory<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
         let mask = self.read_ext(bus);
         let size = i.size;
+        self.fault_pc_bias = 2;
         if i.dst.mode == Mode::PreDec {
             let r = i.dst.reg as usize;
             let mut addr = self.a[r];
@@ -141,6 +181,7 @@ impl M68k {
             self.a[r] = addr;
         } else {
             let mut addr = self.control_address(bus, i.dst);
+            self.fault_pc_bias = 2;
             for bit in 0..16 {
                 if mask & (1 << bit) != 0 {
                     let value = self.movem_register(bit);
@@ -157,34 +198,31 @@ impl M68k {
         let mask = self.read_ext(bus);
         let size = i.size;
         let post_increment = i.src.mode == Mode::PostInc;
-        let start = if post_increment {
+        let mut addr = if post_increment {
             self.a[i.src.reg as usize]
         } else {
             self.control_address(bus, i.src)
         };
-        let mut addr = start;
-        let result = (|| -> Exec {
-            for bit in 0..16 {
-                if mask & (1 << bit) != 0 {
-                    let value = size.sign_extend(self.read_sized(bus, addr, size)?);
-                    if bit < 8 {
-                        self.d[bit] = value;
-                    } else {
-                        self.a[bit - 8] = value;
-                    }
-                    addr = addr.wrapping_add(size.bytes());
+        // MOVEM's microcode PC runs one word ahead of the queue.
+        self.fault_pc_bias = 2;
+        for bit in 0..16 {
+            if mask & (1 << bit) != 0 {
+                let value = size.sign_extend(self.read_sized(bus, addr, size)?);
+                if bit < 8 {
+                    self.d[bit] = value;
+                } else {
+                    self.a[bit - 8] = value;
                 }
+                addr = addr.wrapping_add(size.bytes());
             }
-            // The surplus read.
-            self.read_word(bus, addr)?;
-            Ok(())
-        })();
-        if post_increment {
-            // An address error can only strike the first access; by then the
-            // address register has already been advanced by one word.
-            self.a[i.src.reg as usize] = if result.is_err() { start.wrapping_add(2) } else { addr };
         }
-        result?;
+        // The surplus read.
+        self.read_word(bus, addr)?;
+        // With `(An)+`, An ends up past the last register loaded (so loading
+        // An itself is pointless: the address wins).
+        if post_increment {
+            self.a[i.src.reg as usize] = addr;
+        }
         self.prefetch(bus);
         Ok(())
     }
@@ -260,8 +298,7 @@ impl M68k {
         let r = i.dst.reg as usize;
         let disp = self.read_ext(bus) as i16 as u32;
         let sp = self.a[7].wrapping_sub(4);
-        // For LINK A7 the value pushed is the already decremented SP.
-        let value = if r == 7 { sp } else { self.a[r] };
+        let value = self.a[r];
         self.write_long(bus, sp, value)?;
         self.a[7] = sp;
         self.a[r] = sp;
@@ -273,6 +310,7 @@ impl M68k {
     pub(crate) fn op_unlk<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
         let r = i.dst.reg as usize;
         let frame = self.a[r];
+        self.fault_pc_bias = 2;
         let value = self.read_long(bus, frame)?;
         self.a[7] = frame.wrapping_add(4);
         self.a[r] = value;

@@ -474,7 +474,7 @@ impl M68k {
     /// Fetch a program word. `pc` is always even here: every change of flow
     /// goes through [`M68k::jump`], which checks alignment.
     #[inline]
-    fn fetch<B: Bus>(&mut self, bus: &mut B, addr: u32) -> u16 {
+    pub(crate) fn fetch<B: Bus>(&mut self, bus: &mut B, addr: u32) -> u16 {
         self.cycles += 4;
         bus.read_word(addr & ADDRESS_MASK)
     }
@@ -518,9 +518,9 @@ impl M68k {
 
     /// Change the flow of control: refill the whole queue from `target`.
     ///
-    /// An odd target raises an address error on the first fetch. The PC
-    /// stacked in that case is `target - 4`: the hardware has already moved
-    /// its PC to the target but stacks it with the usual prefetch offset.
+    /// An odd target raises an address error on the first fetch. The new PC
+    /// is not committed until that fetch succeeds, so the PC stacked is the
+    /// jumping instruction's own.
     #[inline]
     pub(crate) fn jump<B: Bus>(&mut self, bus: &mut B, target: u32) -> Exec {
         self.check_target(target)?;
@@ -548,7 +548,7 @@ impl M68k {
             return Err(Exception::AddressError(AddressFault {
                 address: target,
                 access: Access::Fetch,
-                pc: target.wrapping_sub(4),
+                pc: self.pc,
             }));
         }
         Ok(())

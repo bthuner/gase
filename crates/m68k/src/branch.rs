@@ -24,14 +24,15 @@ use crate::ea::{Ea, Mode, Size};
 use crate::exceptions::Exec;
 
 impl M68k {
-    /// The 8-bit displacement in the opcode, or the 16-bit one in IRC.
-    /// Branches that are taken never refill IRC; they jump instead.
+    /// The branch target: the 8-bit displacement in the opcode, or (if that
+    /// is 0) the 16-bit one waiting in IRC. Taken branches never refill IRC
+    /// (they jump instead), and the PC is not advanced past a displacement
+    /// word until the jump succeeds, which shows if the target is odd.
     #[inline]
-    fn branch_target(&mut self) -> u32 {
-        let base = self.pc;
+    fn branch_target(&self) -> u32 {
         let disp8 = self.ird as u8;
-        let disp = if disp8 == 0 { self.take_ext() as i16 as u32 } else { disp8 as i8 as u32 };
-        base.wrapping_add(disp)
+        let disp = if disp8 == 0 { self.irc as i16 as u32 } else { disp8 as i8 as u32 };
+        self.pc.wrapping_add(disp)
     }
 
     pub(crate) fn op_bcc<B: Bus>(&mut self, bus: &mut B) -> Exec {
@@ -53,9 +54,13 @@ impl M68k {
     pub(crate) fn op_bsr<B: Bus>(&mut self, bus: &mut B) -> Exec {
         self.idle(2);
         let target = self.branch_target();
-        // After consuming the displacement, `pc` is the return address.
-        let return_pc = self.pc;
+        let return_pc = if self.ird as u8 == 0 { self.pc.wrapping_add(2) } else { self.pc };
         self.push_long(bus, return_pc)?;
+        // BSR has already loaded the target into its PC when the fetch
+        // faults, so that is what an address error stacks.
+        if target & 1 != 0 {
+            self.pc = target;
+        }
         self.jump(bus, target)
     }
 
@@ -68,13 +73,17 @@ impl M68k {
         }
         let r = i.dst.reg;
         let counter = (self.d[r as usize] as u16).wrapping_sub(1);
-        self.set_d(r, Size::Word, u32::from(counter));
         self.idle(2);
         if counter != 0xFFFF {
             let base = self.pc;
             let target = base.wrapping_add(self.take_ext() as i16 as u32);
+            // The decremented counter is only written back once the branch
+            // target has been fetched successfully.
+            self.check_target(target)?;
+            self.set_d(r, Size::Word, u32::from(counter));
             self.jump(bus, target)
         } else {
+            self.set_d(r, Size::Word, u32::from(counter));
             // Loop finished: the 68000 fetches from the branch target anyway
             // before discovering it must fall through.
             self.idle(4);
@@ -104,51 +113,61 @@ impl M68k {
 
     /// Target of `JMP`/`JSR`. These take their last extension word straight
     /// from IRC without a refill (the queue is reloaded from the target
-    /// anyway), spending that time on internal work instead.
-    fn jump_target<B: Bus>(&mut self, bus: &mut B, ea: Ea) -> u32 {
+    /// anyway), spending that time on internal work instead. As with
+    /// branches, `pc` is not advanced past that word yet; the second value
+    /// returned is how far it still has to move.
+    fn jump_target<B: Bus>(&mut self, bus: &mut B, ea: Ea) -> (u32, u32) {
         let r = ea.reg as usize;
-        match ea.mode {
-            Mode::Indirect => self.a[r],
+        let target = match ea.mode {
+            Mode::Indirect => return (self.a[r], 0),
             Mode::Disp => {
                 self.idle(2);
-                self.a[r].wrapping_add(self.take_ext() as i16 as u32)
+                self.a[r].wrapping_add(self.irc as i16 as u32)
             }
             Mode::Index => {
                 self.idle(6);
-                let ext = self.take_ext();
+                let ext = self.irc;
                 self.indexed(self.a[r], ext)
             }
             Mode::AbsShort => {
                 self.idle(2);
-                self.take_ext() as i16 as u32
+                self.irc as i16 as u32
             }
             Mode::AbsLong => {
                 let high = self.read_ext(bus);
-                u32::from(high) << 16 | u32::from(self.take_ext())
+                u32::from(high) << 16 | u32::from(self.irc)
             }
             Mode::PcDisp => {
                 self.idle(2);
                 let base = self.pc;
-                base.wrapping_add(self.take_ext() as i16 as u32)
+                base.wrapping_add(self.irc as i16 as u32)
             }
             Mode::PcIndex => {
                 self.idle(6);
                 let base = self.pc;
-                let ext = self.take_ext();
+                let ext = self.irc;
                 self.indexed(base, ext)
             }
             _ => unreachable!("JMP/JSR with non-control mode {ea:?}"),
-        }
+        };
+        (target, 2)
     }
 
     pub(crate) fn op_jmp<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
-        let target = self.jump_target(bus, i.src);
+        let start = self.pc;
+        let (target, _) = self.jump_target(bus, i.src);
+        // An odd target stacks the PC as it was at the start of the JMP.
+        if target & 1 != 0 {
+            self.pc = start;
+        }
         self.jump(bus, target)
     }
 
     pub(crate) fn op_jsr<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
-        let target = self.jump_target(bus, i.src);
-        let return_pc = self.pc;
+        let (target, pending) = self.jump_target(bus, i.src);
+        let return_pc = self.pc.wrapping_add(pending);
+        // An odd target stacks the return address.
+        self.pc = return_pc;
         // The first fetch from the target happens before the push, so an odd
         // target faults with nothing pushed.
         self.check_target(target)?;
