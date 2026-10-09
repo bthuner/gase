@@ -7,9 +7,9 @@
 mod cli;
 mod headless;
 mod media;
-mod session;
 #[cfg(feature = "sdl")]
 mod sdl;
+mod session;
 
 use std::process::ExitCode;
 
@@ -30,7 +30,11 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = if options.headless { headless::run(&options) } else { run_windowed(&options) };
+    let result = if options.headless {
+        headless::run(&options)
+    } else {
+        run_windowed(&options)
+    };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {

@@ -76,7 +76,9 @@ fn parse_region(value: &str) -> Result<Region, String> {
 }
 
 fn parse_number<T: std::str::FromStr>(flag: &str, value: &str) -> Result<T, String> {
-    value.parse().map_err(|_| format!("{flag} expects a number, got '{value}'"))
+    value
+        .parse()
+        .map_err(|_| format!("{flag} expects a number, got '{value}'"))
 }
 
 /// Parse arguments (without the program name).
@@ -116,7 +118,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--wav" => o.wav = Some(value("--wav")?.into()),
             "--bench" => o.bench = true,
             "--trace" => o.trace = parse_number("--trace", &value("--trace")?)?,
-            flag if flag.starts_with('-') && flag.len() > 1 => return Err(format!("unknown option '{flag}'")),
+            flag if flag.starts_with('-') && flag.len() > 1 => {
+                return Err(format!("unknown option '{flag}'"));
+            }
             path => {
                 if rom.replace(PathBuf::from(path)).is_some() {
                     return Err("only one ROM can be given".into());
@@ -149,7 +153,16 @@ mod tests {
 
     #[test]
     fn options() {
-        let o = run(&["--region", "eu", "--headless", "--frames", "10", "game.md", "--bench"]).unwrap();
+        let o = run(&[
+            "--region",
+            "eu",
+            "--headless",
+            "--frames",
+            "10",
+            "game.md",
+            "--bench",
+        ])
+        .unwrap();
         assert_eq!(o.region, Some(Region::Europe));
         assert!(o.headless && o.bench);
         assert_eq!(o.frames, 10);

@@ -45,7 +45,12 @@ pub struct AudioClock {
     pub psg_muted: bool,
 }
 
-impl_state!(AudioClock { ym_next, psg_next, psg_sum, psg_ticks });
+impl_state!(AudioClock {
+    ym_next,
+    psg_next,
+    psg_sum,
+    psg_ticks
+});
 
 impl AudioClock {
     /// Run the chips until the master clock reaches `now`.

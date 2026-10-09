@@ -127,7 +127,10 @@ impl fmt::Debug for Cartridge {
         f.debug_struct("Cartridge")
             .field("rom_len", &self.rom.len())
             .field("header", &self.header)
-            .field("sram", &self.sram.as_ref().map(|s| (s.start, s.end, s.data.len())))
+            .field(
+                "sram",
+                &self.sram.as_ref().map(|s| (s.start, s.end, s.data.len())),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -137,7 +140,13 @@ fn text(rom: &[u8], range: std::ops::Range<usize>) -> String {
     rom.get(range)
         .unwrap_or(&[])
         .iter()
-        .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { ' ' })
+        .map(|&b| {
+            if b.is_ascii_graphic() || b == b' ' {
+                b as char
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -145,7 +154,8 @@ fn text(rom: &[u8], range: std::ops::Range<usize>) -> String {
 }
 
 fn be32(rom: &[u8], offset: usize) -> u32 {
-    rom.get(offset..offset + 4).map_or(0, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    rom.get(offset..offset + 4)
+        .map_or(0, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 
 /// Convert the ".smd" dump format to a plain binary.
@@ -174,7 +184,11 @@ fn looks_like_smd(data: &[u8]) -> bool {
 impl Cartridge {
     /// Load a ROM image (plain `.bin`/`.md`/`.gen`, or interleaved `.smd`).
     pub fn from_bytes(data: &[u8]) -> Result<Self, LoadError> {
-        let mut rom = if looks_like_smd(data) { deinterleave_smd(data) } else { data.to_vec() };
+        let mut rom = if looks_like_smd(data) {
+            deinterleave_smd(data)
+        } else {
+            data.to_vec()
+        };
         if rom.len() < 0x200 {
             return Err(LoadError::TooSmall(rom.len()));
         }
@@ -229,7 +243,13 @@ impl Cartridge {
                 SramLanes::Both => end - start + 1,
                 _ => (end - start) / 2 + 1,
             } as usize;
-            return Some(Sram { data: vec![0xFF; size], start, end, lanes, dirty: false });
+            return Some(Sram {
+                data: vec![0xFF; size],
+                start,
+                end,
+                lanes,
+                dirty: false,
+            });
         }
         None
     }
@@ -244,9 +264,9 @@ impl Cartridge {
     /// of all words after the header.
     #[must_use]
     pub fn computed_checksum(&self) -> u16 {
-        self.rom[0x200..]
-            .chunks_exact(2)
-            .fold(0u16, |sum, w| sum.wrapping_add(u16::from_be_bytes([w[0], w[1]])))
+        self.rom[0x200..].chunks_exact(2).fold(0u16, |sum, w| {
+            sum.wrapping_add(u16::from_be_bytes([w[0], w[1]]))
+        })
     }
 
     /// Map a 68000 address in `0x000000..0x400000` to a ROM offset.
@@ -262,7 +282,11 @@ impl Cartridge {
 
     #[inline]
     fn sram_offset(&self, addr: u32) -> Option<usize> {
-        if self.sram_enabled { self.sram.as_ref()?.offset(addr) } else { None }
+        if self.sram_enabled {
+            self.sram.as_ref()?.offset(addr)
+        } else {
+            None
+        }
     }
 
     /// Read a byte from cartridge space.
@@ -274,7 +298,10 @@ impl Cartridge {
         }
         // Reads past the end of small ROMs mirror (address lines not decoded).
         let offset = self.rom_offset(addr);
-        self.rom.get(offset).copied().unwrap_or_else(|| self.rom[offset % self.rom.len()])
+        self.rom
+            .get(offset)
+            .copied()
+            .unwrap_or_else(|| self.rom[offset % self.rom.len()])
     }
 
     /// Read a word from cartridge space.
@@ -326,7 +353,9 @@ impl Cartridge {
 
     /// Return true once after the SRAM was modified (for periodic saving).
     pub fn take_sram_dirty(&mut self) -> bool {
-        self.sram.as_mut().is_some_and(|s| std::mem::take(&mut s.dirty))
+        self.sram
+            .as_mut()
+            .is_some_and(|s| std::mem::take(&mut s.dirty))
     }
 }
 
@@ -334,7 +363,10 @@ impl Cartridge {
 /// single hex digit bitmask (bit 0 Japan, bit 2 Americas, bit 3 Europe).
 fn parse_regions(field: &str) -> Regions {
     let mut regions = Regions::default();
-    let letters = field.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    let letters = field
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>();
     if letters.len() == 1 && letters != "J" && letters != "U" && letters != "E" {
         if let Some(mask) = letters.chars().next().and_then(|c| c.to_digit(16)) {
             regions.japan = mask & 1 != 0;
@@ -369,22 +401,47 @@ mod tests {
         let cart = Cartridge::from_bytes(&rom_with_header(0x1000)).unwrap();
         assert_eq!(cart.header.system, "SEGA MEGA DRIVE");
         assert_eq!(cart.header.overseas_title, "TEST GAME");
-        assert_eq!(cart.header.regions, Regions { japan: true, americas: true, europe: true });
+        assert_eq!(
+            cart.header.regions,
+            Regions {
+                japan: true,
+                americas: true,
+                europe: true
+            }
+        );
     }
 
     #[test]
     fn hex_region_mask() {
-        assert_eq!(parse_regions("4"), Regions { japan: false, americas: true, europe: false });
-        assert_eq!(parse_regions("E"), Regions { japan: false, americas: false, europe: true });
+        assert_eq!(
+            parse_regions("4"),
+            Regions {
+                japan: false,
+                americas: true,
+                europe: false
+            }
+        );
+        assert_eq!(
+            parse_regions("E"),
+            Regions {
+                japan: false,
+                americas: false,
+                europe: true
+            }
+        );
     }
 
     #[test]
     fn sram_on_odd_bytes() {
         let mut rom = rom_with_header(0x1000);
-        rom[0x1B0..0x1BC].copy_from_slice(&[b'R', b'A', 0xF8, 0x20, 0, 0x20, 0, 1, 0, 0x20, 0x3F, 0xFF]);
+        rom[0x1B0..0x1BC]
+            .copy_from_slice(&[b'R', b'A', 0xF8, 0x20, 0, 0x20, 0, 1, 0, 0x20, 0x3F, 0xFF]);
         let mut cart = Cartridge::from_bytes(&rom).unwrap();
         let sram = cart.sram.as_ref().unwrap();
-        assert_eq!((sram.start, sram.end, sram.lanes, sram.data.len()), (0x200001, 0x203FFF, SramLanes::Odd, 0x2000));
+        assert_eq!(
+            (sram.start, sram.end, sram.lanes, sram.data.len()),
+            (0x200001, 0x203FFF, SramLanes::Odd, 0x2000)
+        );
         cart.write_byte(0x200001, 0x42);
         cart.write_byte(0x200000, 0x99); // even byte: not connected
         assert_eq!(cart.read_byte(0x200001), 0x42);

@@ -17,7 +17,8 @@ pub fn run(options: &Options) -> Result<(), String> {
 
     let mut wav = match &options.wav {
         Some(path) => {
-            let file = File::create(path).map_err(|e| format!("cannot create {}: {e}", path.display()))?;
+            let file =
+                File::create(path).map_err(|e| format!("cannot create {}: {e}", path.display()))?;
             Some(WavWriter::new(BufWriter::new(file), SAMPLE_RATE).map_err(|e| e.to_string())?)
         }
         None => None,

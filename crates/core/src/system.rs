@@ -45,7 +45,11 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { region: None, sample_rate: 48_000, low_pass: true }
+        Self {
+            region: None,
+            sample_rate: 48_000,
+            low_pass: true,
+        }
     }
 }
 
@@ -66,7 +70,9 @@ impl std::fmt::Display for StateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StateError::NotASaveState => f.write_str("not a gase save state"),
-            StateError::WrongVersion(v) => write!(f, "save state format version {v} is not supported"),
+            StateError::WrongVersion(v) => {
+                write!(f, "save state format version {v} is not supported")
+            }
             StateError::WrongGame => f.write_str("save state belongs to a different game"),
             StateError::Corrupt(e) => write!(f, "save state is corrupt: {e}"),
         }
@@ -138,7 +144,11 @@ impl Genesis {
     #[must_use]
     pub fn new(cart: Cartridge, config: &Config) -> Self {
         let region = config.region.unwrap_or_else(|| auto_region(&cart));
-        let standard = if region.is_pal() { VideoStandard::Pal } else { VideoStandard::Ntsc };
+        let standard = if region.is_pal() {
+            VideoStandard::Pal
+        } else {
+            VideoStandard::Ntsc
+        };
         let rate = native_rate(standard.master_clock());
         let hw = Hardware {
             cart,
@@ -248,7 +258,12 @@ impl Genesis {
     #[must_use]
     pub fn frame(&self) -> Frame<'_> {
         let (width, height) = self.hw.vdp.frame_size();
-        Frame { pixels: self.hw.vdp.frame(), width, height, stride: gase_vdp::MAX_WIDTH }
+        Frame {
+            pixels: self.hw.vdp.frame(),
+            width,
+            height,
+            stride: gase_vdp::MAX_WIDTH,
+        }
     }
 
     /// Move the audio produced so far (interleaved stereo at the host rate)
@@ -374,7 +389,11 @@ impl Genesis {
         let hw = &mut self.hw;
         // Only disassemble from ROM and RAM: reading I/O has side effects.
         let (text, _) = gase_m68k::disasm::disassemble(pc, |addr| {
-            if addr < 0x40_0000 || addr >= 0xE0_0000 { hw.read_word_68k(addr) } else { 0 }
+            if !(0x40_0000..0xE0_0000).contains(&addr) {
+                hw.read_word_68k(addr)
+            } else {
+                0
+            }
         });
         let d = &self.m68k.d;
         let a = &self.m68k.a;
@@ -479,7 +498,10 @@ impl Genesis {
         // FNV-1a over the header and the ROM length.
         let rom = self.hw.cart.rom();
         let mut hash: u32 = 0x811C_9DC5;
-        for &byte in rom[0x100..0x200].iter().chain(&(rom.len() as u32).to_le_bytes()) {
+        for &byte in rom[0x100..0x200]
+            .iter()
+            .chain(&(rom.len() as u32).to_le_bytes())
+        {
             hash = (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193);
         }
         hash

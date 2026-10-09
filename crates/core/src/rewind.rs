@@ -24,7 +24,12 @@ impl Rewind {
     pub fn new(seconds: u32, interval: u32, frame_rate: f64) -> Self {
         let interval = interval.max(1);
         let capacity = (f64::from(seconds) * frame_rate / f64::from(interval)).ceil() as usize;
-        Self { snapshots: VecDeque::with_capacity(capacity), capacity: capacity.max(1), interval, countdown: 0 }
+        Self {
+            snapshots: VecDeque::with_capacity(capacity),
+            capacity: capacity.max(1),
+            interval,
+            countdown: 0,
+        }
     }
 
     /// Call once per emulated frame; takes a snapshot every `interval` frames.

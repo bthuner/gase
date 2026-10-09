@@ -95,7 +95,12 @@ pub struct Port {
     last_th_change: u64,
 }
 
-impl_state!(Port { data, control, th_count, last_th_change });
+impl_state!(Port {
+    data,
+    control,
+    th_count,
+    last_th_change
+});
 
 impl Port {
     fn th(&self) -> bool {
@@ -127,7 +132,12 @@ impl Port {
                 (true, 3) => {
                     // C B Mode X Y Z
                     let mut v = 0x40 | (b.th_high() & 0x30);
-                    for (bit, button) in [(0, Buttons::Z), (1, Buttons::Y), (2, Buttons::X), (3, Buttons::MODE)] {
+                    for (bit, button) in [
+                        (0, Buttons::Z),
+                        (1, Buttons::Y),
+                        (2, Buttons::X),
+                        (3, Buttons::MODE),
+                    ] {
                         if !b.contains(button) {
                             v |= 1 << bit;
                         }
@@ -229,7 +239,10 @@ impl_state!(Io { ports, ext });
 impl Io {
     #[must_use]
     pub fn new(region: Region) -> Self {
-        let mut io = Self { region, ..Self::default() };
+        let mut io = Self {
+            region,
+            ..Self::default()
+        };
         io.ext.device = Device::None;
         io
     }
@@ -292,7 +305,10 @@ mod tests {
 
     #[test]
     fn three_button_read_both_halves() {
-        let mut io = io_with(Device::ThreeButton, Buttons::UP | Buttons::C | Buttons::START);
+        let mut io = io_with(
+            Device::ThreeButton,
+            Buttons::UP | Buttons::C | Buttons::START,
+        );
         io.write(0x03, 0x40, 0);
         // TH high: C B R L D U, active low -> C (bit 5) and U (bit 0) low.
         assert_eq!(io.read(0x03, 0) & 0x3F, 0b01_1110);

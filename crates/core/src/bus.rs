@@ -69,7 +69,9 @@ pub struct Hardware {
 
 impl Hardware {
     pub(crate) fn line_cycle(&self) -> u32 {
-        self.now.saturating_sub(self.line_start).min(u64::from(gase_vdp::MASTER_CYCLES_PER_LINE - 1)) as u32
+        self.now
+            .saturating_sub(self.line_start)
+            .min(u64::from(gase_vdp::MASTER_CYCLES_PER_LINE - 1)) as u32
     }
 
     /// The Z80 runs when it is neither held in reset nor off the bus.
@@ -131,7 +133,11 @@ impl Hardware {
             0x7F00..=0x7F1F => {
                 // The VDP as seen by the Z80 (mostly used for the HV counter).
                 let word = self.vdp_read_word(u32::from(addr));
-                if addr & 1 == 0 { (word >> 8) as u8 } else { word as u8 }
+                if addr & 1 == 0 {
+                    (word >> 8) as u8
+                } else {
+                    word as u8
+                }
             }
             0x7F20..=0x7FFF => 0xFF,
             0x8000..=0xFFFF => {
@@ -184,7 +190,11 @@ impl Hardware {
             0xA1_1100..=0xA1_1101 => self.busreq_status(addr),
             0xC0_0000..=0xDF_FFFF => {
                 let word = self.vdp_read_word(addr);
-                if addr & 1 == 0 { (word >> 8) as u8 } else { word as u8 }
+                if addr & 1 == 0 {
+                    (word >> 8) as u8
+                } else {
+                    word as u8
+                }
             }
             0xE0_0000..=0xFF_FFFF => self.ram[(addr & 0xFFFF) as usize],
             _ => 0xFF,
@@ -194,7 +204,11 @@ impl Hardware {
     fn busreq_status(&self, addr: u32) -> u8 {
         // Bit 0 reads 0 once the 68000 owns the Z80 bus. The other bits are
         // open bus.
-        if addr & 1 == 0 { u8::from(!(self.z80_busreq && !self.z80_reset)) } else { 0 }
+        if addr & 1 == 0 {
+            u8::from(!(self.z80_busreq && !self.z80_reset))
+        } else {
+            0
+        }
     }
 
     pub(crate) fn read_word_68k(&mut self, addr: u32) -> u16 {

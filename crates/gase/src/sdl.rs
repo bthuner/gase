@@ -110,7 +110,9 @@ impl Frontend {
     }
 
     fn pad_index(&self, instance: u32) -> Option<usize> {
-        self.pads.iter().position(|p| p.controller.instance_id() == instance)
+        self.pads
+            .iter()
+            .position(|p| p.controller.instance_id() == instance)
     }
 
     /// Handle a hotkey; returns false to quit.
@@ -183,7 +185,12 @@ fn display_rect(window: (u32, u32), lines: u32, integer: bool) -> Rect {
         scale = scale.floor();
     }
     let (w, h) = ((base_w * scale) as u32, (base_h * scale) as u32);
-    Rect::new(((ww - w) / 2) as i32, ((wh - h) / 2) as i32, w.max(1), h.max(1))
+    Rect::new(
+        ((ww - w) / 2) as i32,
+        ((wh - h) / 2) as i32,
+        w.max(1),
+        h.max(1),
+    )
 }
 
 pub fn run(options: &Options) -> Result<(), String> {
@@ -201,18 +208,28 @@ pub fn run(options: &Options) -> Result<(), String> {
         .allow_highdpi()
         .build()
         .map_err(|e| e.to_string())?;
-    let mut canvas = window.into_canvas().accelerated().build().map_err(|e| e.to_string())?;
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     if options.fullscreen {
-        canvas.window_mut().set_fullscreen(FullscreenType::Desktop)?;
+        canvas
+            .window_mut()
+            .set_fullscreen(FullscreenType::Desktop)?;
     }
     let creator = canvas.texture_creator();
     let mut texture = creator
-        .create_texture_streaming(PixelFormatEnum::ARGB8888, gase_core::MAX_WIDTH as u32, gase_core::MAX_HEIGHT as u32)
+        .create_texture_streaming(
+            PixelFormatEnum::ARGB8888,
+            gase_core::MAX_WIDTH as u32,
+            gase_core::MAX_HEIGHT as u32,
+        )
         .map_err(|e| e.to_string())?;
 
     let audio: Option<AudioQueue<i16>> = if options.audio {
         let audio = sdl.audio()?;
-        let spec = AudioSpecDesired { freq: Some(SAMPLE_RATE as i32), channels: Some(2), samples: Some(512) };
+        let spec = AudioSpecDesired {
+            freq: Some(SAMPLE_RATE as i32),
+            channels: Some(2),
+            samples: Some(512),
+        };
         let queue = audio.open_queue::<i16, _>(None, &spec)?;
         queue.resume();
         Some(queue)
@@ -246,7 +263,11 @@ pub fn run(options: &Options) -> Result<(), String> {
         for event in events.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
-                Event::KeyDown { scancode: Some(code), repeat, .. } => {
+                Event::KeyDown {
+                    scancode: Some(code),
+                    repeat,
+                    ..
+                } => {
                     if let Some(b) = keyboard_button(code) {
                         fe.keyboard.set(b, true);
                     } else if code == Scancode::Tab {
@@ -257,7 +278,10 @@ pub fn run(options: &Options) -> Result<(), String> {
                         break 'main;
                     }
                 }
-                Event::KeyUp { scancode: Some(code), .. } => {
+                Event::KeyUp {
+                    scancode: Some(code),
+                    ..
+                } => {
                     if let Some(b) = keyboard_button(code) {
                         fe.keyboard.set(b, false);
                     } else if code == Scancode::Tab {
@@ -269,8 +293,15 @@ pub fn run(options: &Options) -> Result<(), String> {
                 Event::ControllerDeviceAdded { which, .. } => {
                     if let Ok(controller) = controllers.open(which) {
                         let name = controller.name();
-                        fe.pads.push(Pad { controller, buttons: Buttons::default(), stick: Buttons::default() });
-                        fe.notify(format!("Controller connected: {name} (player {})", fe.pads.len().min(2)));
+                        fe.pads.push(Pad {
+                            controller,
+                            buttons: Buttons::default(),
+                            stick: Buttons::default(),
+                        });
+                        fe.notify(format!(
+                            "Controller connected: {name} (player {})",
+                            fe.pads.len().min(2)
+                        ));
                     }
                 }
                 Event::ControllerDeviceRemoved { which, .. } => {
@@ -279,13 +310,16 @@ pub fn run(options: &Options) -> Result<(), String> {
                         fe.notify("Controller disconnected");
                     }
                 }
-                Event::ControllerButtonDown { which, button, .. } | Event::ControllerButtonUp { which, button, .. } => {
+                Event::ControllerButtonDown { which, button, .. }
+                | Event::ControllerButtonUp { which, button, .. } => {
                     let pressed = matches!(event, Event::ControllerButtonDown { .. });
                     if let (Some(i), Some(b)) = (fe.pad_index(which), pad_button(button)) {
                         fe.pads[i].buttons.set(b, pressed);
                     }
                 }
-                Event::ControllerAxisMotion { which, axis, value, .. } => {
+                Event::ControllerAxisMotion {
+                    which, axis, value, ..
+                } => {
                     if let Some(i) = fe.pad_index(which) {
                         const DEAD_ZONE: i16 = 12_000;
                         let stick = &mut fe.pads[i].stick;
@@ -302,7 +336,10 @@ pub fn run(options: &Options) -> Result<(), String> {
                         }
                     }
                 }
-                Event::Window { win_event: WindowEvent::FocusLost, .. } => {
+                Event::Window {
+                    win_event: WindowEvent::FocusLost,
+                    ..
+                } => {
                     // Avoid stuck keys when the window loses focus.
                     fe.keyboard = Buttons::default();
                 }
@@ -319,7 +356,11 @@ pub fn run(options: &Options) -> Result<(), String> {
                     fe.session.genesis.run_frame();
                 }
             } else {
-                let count = if fe.fast_forward { FAST_FORWARD_FRAMES } else { 1 };
+                let count = if fe.fast_forward {
+                    FAST_FORWARD_FRAMES
+                } else {
+                    1
+                };
                 for _ in 0..count {
                     fe.session.genesis.run_frame();
                     fe.rewind.record(&fe.session.genesis);
@@ -337,7 +378,9 @@ pub fn run(options: &Options) -> Result<(), String> {
                 let queued = queue.size() / 4; // stereo i16 frames
                 // Dynamic rate control: ±0.5% depending on the fill level.
                 let error = (f64::from(TARGET_QUEUE) - f64::from(queued)) / f64::from(TARGET_QUEUE);
-                fe.session.genesis.set_audio_speed(1.0 + 0.005 * error.clamp(-1.0, 1.0));
+                fe.session
+                    .genesis
+                    .set_audio_speed(1.0 + 0.005 * error.clamp(-1.0, 1.0));
                 if fe.muted {
                     samples.iter_mut().for_each(|s| *s = 0);
                 }
@@ -366,21 +409,37 @@ pub fn run(options: &Options) -> Result<(), String> {
         // --- Video ----------------------------------------------------------------
         let frame = fe.session.genesis.frame();
         texture
-            .with_lock(Rect::new(0, 0, frame.width as u32, frame.height as u32), |buffer, pitch| {
-                for (y, row) in frame.pixels.chunks(frame.stride).take(frame.height).enumerate() {
-                    let line = &mut buffer[y * pitch..y * pitch + frame.width * 4];
-                    for (dst, &src) in line.chunks_exact_mut(4).zip(&row[..frame.width]) {
-                        dst.copy_from_slice(&(src | 0xFF00_0000).to_ne_bytes());
+            .with_lock(
+                Rect::new(0, 0, frame.width as u32, frame.height as u32),
+                |buffer, pitch| {
+                    for (y, row) in frame
+                        .pixels
+                        .chunks(frame.stride)
+                        .take(frame.height)
+                        .enumerate()
+                    {
+                        let line = &mut buffer[y * pitch..y * pitch + frame.width * 4];
+                        for (dst, &src) in line.chunks_exact_mut(4).zip(&row[..frame.width]) {
+                            dst.copy_from_slice(&(src | 0xFF00_0000).to_ne_bytes());
+                        }
                     }
-                }
-            })
+                },
+            )
             .map_err(|e| e.to_string())?;
         let interlaced = frame.height > 240;
-        let lines = if interlaced { frame.height / 2 } else { frame.height } as u32;
+        let lines = if interlaced {
+            frame.height / 2
+        } else {
+            frame.height
+        } as u32;
         let target = display_rect(canvas.output_size()?, lines, options.integer_scale);
         canvas.set_draw_color(sdl2::pixels::Color::BLACK);
         canvas.clear();
-        canvas.copy(&texture, Rect::new(0, 0, frame.width as u32, frame.height as u32), target)?;
+        canvas.copy(
+            &texture,
+            Rect::new(0, 0, frame.width as u32, frame.height as u32),
+            target,
+        )?;
         canvas.present();
 
         // --- Housekeeping ----------------------------------------------------------
@@ -400,7 +459,10 @@ pub fn run(options: &Options) -> Result<(), String> {
             }
         }
         if status != shown_title {
-            canvas.window_mut().set_title(&status).map_err(|e| e.to_string())?;
+            canvas
+                .window_mut()
+                .set_title(&status)
+                .map_err(|e| e.to_string())?;
             shown_title = status;
         }
         if last_sram_flush.elapsed() > Duration::from_secs(5) {

@@ -46,7 +46,13 @@ impl Rom {
 
     /// `move.l #imm, (addr).l`
     fn move_l(&mut self, imm: u32, addr: u32) -> &mut Self {
-        self.words(&[0x23FC, (imm >> 16) as u16, imm as u16, (addr >> 16) as u16, addr as u16])
+        self.words(&[
+            0x23FC,
+            (imm >> 16) as u16,
+            imm as u16,
+            (addr >> 16) as u16,
+            addr as u16,
+        ])
     }
 
     /// `move.b #imm, (addr).l`
@@ -60,7 +66,10 @@ impl Rom {
     }
 
     fn console(&self) -> Genesis {
-        Genesis::new(Cartridge::from_bytes(&self.bytes).unwrap(), &Config::default())
+        Genesis::new(
+            Cartridge::from_bytes(&self.bytes).unwrap(),
+            &Config::default(),
+        )
     }
 }
 
@@ -97,7 +106,10 @@ fn vertical_interrupt_runs_once_per_frame() {
         console.run_frame();
     }
     let count = u16::from_be_bytes([console.hw.ram[0], console.hw.ram[1]]);
-    assert!((9..=10).contains(&count), "VINT ran {count} times in 10 frames");
+    assert!(
+        (9..=10).contains(&count),
+        "VINT ran {count} times in 10 frames"
+    );
 }
 
 #[test]
@@ -122,7 +134,10 @@ fn z80_program_loaded_by_68000_runs() {
 #[test]
 fn save_state_round_trip_is_deterministic() {
     let mut rom = Rom::new();
-    rom.vector(30, 0x400).move_w(0x8164, VDP_CTRL).words(&[0x46FC, 0x2000]).spin();
+    rom.vector(30, 0x400)
+        .move_w(0x8164, VDP_CTRL)
+        .words(&[0x46FC, 0x2000])
+        .spin();
     rom.at(0x400).words(&[0x5279, 0x00FF, 0x0000, 0x4E73]);
     let mut a = rom.console();
     for _ in 0..5 {
@@ -154,5 +169,8 @@ fn audio_is_produced_at_the_host_rate() {
     }
     // 60 NTSC frames ≈ 1.0013 s of stereo audio at 48 kHz.
     let frames = audio.len() / 2;
-    assert!((47_000..49_200).contains(&frames), "got {frames} sample frames");
+    assert!(
+        (47_000..49_200).contains(&frames),
+        "got {frames} sample frames"
+    );
 }
