@@ -36,7 +36,7 @@ pub mod io;
 pub mod rewind;
 pub mod system;
 
-pub use cartridge::{Cartridge, LoadError};
+pub use cartridge::{Cartridge, LoadError, SaveType};
 pub use gase_vdp::{MAX_HEIGHT, MAX_WIDTH, VideoStandard};
 pub use io::{Buttons, Device, Region};
 pub use rewind::Rewind;
