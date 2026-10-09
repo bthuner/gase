@@ -39,7 +39,7 @@
 //! ```
 //!
 //! * `A` is the accumulator, the implicit operand of most arithmetic.
-//!   `F` holds the [flags](flags).
+//!   `F` holds the [flags].
 //! * `BC`, `DE`, `HL` are general purpose and pair up as 16-bit registers.
 //!   `HL` is the privileged memory pointer: `(HL)` is an operand of almost
 //!   every 8-bit instruction.

@@ -90,6 +90,7 @@ impl Z80 {
                 if self.flags_written {
                     self.q = self.f;
                 }
+                self.flags_written = false;
             }
             1 => {
                 // RST 38h: 13 T-states.

@@ -26,9 +26,9 @@
 //! Each page is a plain `match` on the opcode byte, which the compiler turns
 //! into a jump table, so decoding costs one indirect branch per byte.
 
-mod base;
-mod cb;
-mod ed;
+pub mod base;
+pub mod cb;
+pub mod ed;
 
 use crate::{Bus, Z80};
 

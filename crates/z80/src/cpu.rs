@@ -170,35 +170,44 @@ impl Z80 {
     /// as the real CPU never accepts an interrupt between a prefix and the
     /// opcode it modifies.
     pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
-        self.t = 0;
-
         // Interrupts are sampled at the end of the previous instruction, i.e.
         // before the next one starts. NMI wins over INT.
         if self.nmi_pending {
             self.accept_nmi(bus);
-            return self.t;
-        }
-        if self.irq_line && self.iff1 && !self.ei_delay {
+        } else if self.irq_line && self.iff1 && !self.ei_delay {
             self.accept_int(bus);
-            return self.t;
-        }
-
-        self.ei_delay = false;
-        self.ld_a_ir = false;
-        self.flags_written = false;
-
-        if self.halted {
-            // HALT keeps fetching (and discarding) opcodes so that DRAM refresh
-            // continues; PC already points past the HALT instruction.
-            self.inc_r();
-            self.t = 4;
         } else {
-            let op = self.fetch_opcode(bus);
-            self.execute(bus, op);
-        }
+            self.ei_delay = false;
+            self.ld_a_ir = false;
+            self.flags_written = false;
 
-        self.q = if self.flags_written { self.f } else { 0 };
-        self.t
+            if self.halted {
+                // HALT keeps fetching (and discarding) opcodes so that DRAM
+                // refresh continues; PC already points past the HALT.
+                self.inc_r();
+                self.t = 4;
+            } else {
+                let op = self.fetch_opcode(bus);
+                self.execute(bus, op);
+            }
+
+            self.q = if self.flags_written { self.f } else { 0 };
+            self.flags_written = false;
+        }
+        // Leave the per-step scratch fields zeroed, so that two CPUs in the
+        // same architectural state compare equal.
+        std::mem::take(&mut self.t)
+    }
+
+    /// Execute instructions until at least `budget` T-states have elapsed.
+    /// Returns the T-states actually used, which may overshoot the budget by
+    /// up to one instruction; carry the excess over to the next call.
+    pub fn run<B: Bus>(&mut self, bus: &mut B, budget: u32) -> u32 {
+        let mut used = 0;
+        while used < budget {
+            used += self.step(bus);
+        }
+        used
     }
 
     /// The program counter.
@@ -302,8 +311,7 @@ impl Z80 {
         u16::from_le_bytes([lo, hi])
     }
 
-    /// Read a signed displacement and apply it to `base`: the `d` of `(IX+d)`
-    /// and of relative jumps.
+    /// Read the signed displacement `d` of `(IX+d)` and add it to `base`.
     #[inline]
     pub(crate) fn fetch_displaced<B: Bus>(&mut self, bus: &mut B, base: u16) -> u16 {
         let d = self.fetch_byte(bus) as i8;
