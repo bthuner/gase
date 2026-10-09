@@ -23,7 +23,7 @@
 
 use gase_m68k::M68k;
 use gase_savestate::{Reader, State, Writer};
-use gase_sound::{LowPass, Psg, Resampler, Ym2612};
+use gase_sound::{DcBlocker, LowPass, Psg, Resampler, Ym2612};
 use gase_vdp::{HBLANK_START_CYCLE, MASTER_CYCLES_PER_LINE, VINT_CYCLE, Vdp, VideoStandard};
 use gase_z80::Z80;
 
@@ -110,6 +110,7 @@ pub struct Genesis {
     frame_count: u64,
     resampler: Resampler,
     low_pass: Option<LowPass>,
+    dc_blocker: DcBlocker,
     audio_out: Vec<i16>,
     /// Number of 68000 instructions still to be traced.
     trace_remaining: u64,
@@ -165,7 +166,16 @@ impl Genesis {
             z80_clock: 0,
             next_line: 0,
             frame_count: 0,
-            resampler: Resampler::new(rate, f64::from(config.sample_rate)),
+            resampler: {
+                // Six FM channels plus the PSG can exceed the 16-bit range;
+                // halving leaves headroom for loud games without clipping.
+                let mut r = Resampler::new(rate, f64::from(config.sample_rate));
+                r.set_gain(0.5);
+                r
+            },
+            // The YM2612's ladder effect adds a constant offset; real
+            // consoles remove it with an output capacitor.
+            dc_blocker: DcBlocker::new(10.0, rate),
             low_pass: config.low_pass.then(|| LowPass::new(3390.0, rate)),
             audio_out: Vec::new(),
             trace_remaining: 0,
@@ -338,6 +348,7 @@ impl Genesis {
 
     fn resample_audio(&mut self) {
         for (left, right) in self.hw.audio.samples.drain(..) {
+            let (left, right) = self.dc_blocker.process(left, right);
             let (left, right) = match &mut self.low_pass {
                 Some(filter) => filter.process(left, right),
                 None => (left, right),

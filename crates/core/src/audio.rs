@@ -20,7 +20,9 @@ pub const YM_SAMPLE_PERIOD: u64 = 1008;
 pub const PSG_TICK_PERIOD: u64 = 240;
 
 /// PSG level relative to the FM output, as a fraction (numerator / 256).
-const PSG_GAIN: i64 = 128;
+/// At 1:1, the four PSG channels together are as loud as one FM channel,
+/// which matches the balance of a real console.
+const PSG_GAIN: i64 = 256;
 
 /// Native sample rate of the mixed output for a master clock frequency.
 #[must_use]
