@@ -1,0 +1,28 @@
+# The CPU cores are validated against large JSON test-vector suites
+# (TomHarte/SingleStepTests). They are too big to download on every push,
+# so this runs weekly and on demand.
+name: CPU test vectors
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  vectors:
+    strategy:
+      fail-fast: false
+      matrix:
+        cpu: [z80]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Download vectors
+        run: scripts/fetch-${{ matrix.cpu }}-tests.sh
+      - name: Run vectors
+        run: cargo test -p gase-${{ matrix.cpu }} --profile fast-test -- --ignored
