@@ -5,6 +5,7 @@
 //! runs without any window, for tests, CI and benchmarks.
 
 mod cli;
+mod debugger;
 mod headless;
 mod media;
 #[cfg(feature = "sdl")]

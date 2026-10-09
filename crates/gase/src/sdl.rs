@@ -9,19 +9,28 @@
 //! the queue from slowly over- or under-flowing, the resampler's ratio is
 //! nudged by up to ±0.5% depending on how full the queue is (dynamic rate
 //! control) — far too little to hear, but enough to absorb clock drift.
+//!
+//! # The debugger window
+//!
+//! F1 (or the backtick key) opens a second window with the debugger
+//! ([`crate::debugger::Panel`]). While it has the keyboard focus, keys go to
+//! the debugger instead of the game. When breakpoints are set, or the
+//! debugger has stopped the console in the middle of a frame, frames run
+//! through [`gase_core::Debugger`] instead of [`gase_core::Genesis::run_frame`].
 
 use std::time::{Duration, Instant};
 
-use gase_core::{Buttons, Rewind};
+use gase_core::{Buttons, Debugger, Rewind, Stop};
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
 use sdl2::event::{Event, WindowEvent};
-use sdl2::keyboard::Scancode;
+use sdl2::keyboard::{Keycode, Scancode};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::video::FullscreenType;
 
 use crate::cli::Options;
+use crate::debugger::{self, Action, Key, Panel};
 use crate::session::Session;
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -90,6 +99,34 @@ struct Frontend {
     slot: u8,
     rewind: Rewind,
     message: Option<(String, Instant)>,
+    debug: Debugger,
+    panel: Panel,
+    /// The debugger window is shown.
+    debug_open: bool,
+    /// A debugger command to run while paused.
+    debug_command: Option<Action>,
+}
+
+/// Translate a key for the debugger panel.
+fn debugger_key(code: Scancode, keycode: Option<Keycode>) -> Option<Key> {
+    Some(match code {
+        Scancode::Up => Key::Up,
+        Scancode::Down => Key::Down,
+        Scancode::PageDown => Key::PageDown,
+        Scancode::Home => Key::Home,
+        Scancode::Return | Scancode::KpEnter => Key::Enter,
+        Scancode::Backspace => Key::Backspace,
+        Scancode::Escape => Key::Escape,
+        _ => {
+            // Printable keys: SDL key codes are their (lower-case) characters,
+            // so this follows the keyboard layout.
+            let c = char::from_u32(keycode?.into_i32() as u32)?;
+            if !(' '..='~').contains(&c) {
+                return None;
+            }
+            Key::Char(c.to_ascii_lowercase())
+        }
+    })
 }
 
 impl Frontend {
@@ -109,6 +146,56 @@ impl Frontend {
         }
     }
 
+    fn toggle_debugger(&mut self) {
+        self.debug_open = !self.debug_open;
+        if self.debug_open {
+            self.panel.follow_pc();
+        }
+    }
+
+    /// Run a debugger command (the console is paused).
+    fn run_debug_command(&mut self, action: Action) {
+        let genesis = &mut self.session.genesis;
+        let stop = match action {
+            Action::Step => self.debug.step_instruction(genesis),
+            Action::StepFrame => self.debug.run_frame(genesis),
+            Action::RunToVBlank => self.debug.run_to_vblank(genesis),
+            _ => return,
+        };
+        self.session.print_trace();
+        if stop == Stop::FrameEnd {
+            self.rewind.record(&self.session.genesis);
+        }
+        self.panel.set_status(match stop {
+            Stop::Stepped => "Stepped one instruction".to_string(),
+            Stop::FrameEnd => format!("Frame {} done", self.session.genesis.frame_count()),
+            Stop::Breakpoint(pc) => format!("Breakpoint at ${pc:06X}"),
+            Stop::VBlank => "Vertical interrupt raised: S steps into the handler".to_string(),
+        });
+        self.panel.follow_pc();
+    }
+
+    /// Handle a key pressed in the debugger window.
+    fn debugger_key(&mut self, key: Key) {
+        match self
+            .panel
+            .key(key, &mut self.session.genesis, &mut self.debug)
+        {
+            Action::None => {}
+            Action::Close => self.debug_open = false,
+            Action::TogglePause => self.toggle_pause(),
+            command => {
+                self.paused = true;
+                self.debug_command = Some(command);
+            }
+        }
+    }
+
+    fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+        self.notify(if self.paused { "Paused" } else { "Resumed" });
+    }
+
     fn pad_index(&self, instance: u32) -> Option<usize> {
         self.pads
             .iter()
@@ -119,14 +206,15 @@ impl Frontend {
     fn hotkey(&mut self, code: Scancode, canvas: &mut sdl2::render::WindowCanvas) -> bool {
         match code {
             Scancode::Escape => return false,
-            Scancode::P => {
-                self.paused = !self.paused;
-                self.notify(if self.paused { "Paused" } else { "Resumed" });
-            }
+            Scancode::P => self.toggle_pause(),
+            Scancode::F1 | Scancode::Grave => self.toggle_debugger(),
             Scancode::N if self.paused => self.step_frame = true,
             Scancode::M => {
                 self.muted = !self.muted;
                 self.notify(if self.muted { "Sound off" } else { "Sound on" });
+            }
+            Scancode::F5 if self.debug.in_frame() => {
+                self.notify("Stopped mid-frame: finish the frame first (F in the debugger)");
             }
             Scancode::F5 => match self.session.save_state(self.slot) {
                 Ok(_) => self.notify(format!("Saved state to slot {}", self.slot)),
@@ -135,6 +223,7 @@ impl Frontend {
             Scancode::F8 => match self.session.load_state(self.slot) {
                 Ok(_) => {
                     self.rewind.clear();
+                    self.debug.forget_position();
                     self.notify(format!("Loaded state from slot {}", self.slot));
                 }
                 Err(e) => self.notify(e),
@@ -237,7 +326,39 @@ pub fn run(options: &Options) -> Result<(), String> {
         None
     };
 
+    // The debugger window is created hidden and shown with F1.
+    let mut debug_canvas = video
+        .window(
+            "gase debugger",
+            debugger::WIDTH as u32,
+            debugger::HEIGHT as u32,
+        )
+        .position_centered()
+        .resizable()
+        .allow_highdpi()
+        .hidden()
+        .build()
+        .map_err(|e| e.to_string())?
+        .into_canvas()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let debug_creator = debug_canvas.texture_creator();
+    let mut debug_texture = debug_creator
+        .create_texture_streaming(
+            PixelFormatEnum::ARGB8888,
+            debugger::WIDTH as u32,
+            debugger::HEIGHT as u32,
+        )
+        .map_err(|e| e.to_string())?;
+    let debug_window_id = debug_canvas.window().id();
+    let main_window_id = canvas.window().id();
+    let mut debug_shown = false;
+
     let frame_rate = session.genesis.frame_rate();
+    let mut debug = Debugger::new();
+    for &addr in &options.breakpoints {
+        debug.add_breakpoint(addr);
+    }
     let mut fe = Frontend {
         session,
         keyboard: Buttons::default(),
@@ -250,7 +371,12 @@ pub fn run(options: &Options) -> Result<(), String> {
         slot: 0,
         rewind: Rewind::new(20, 4, frame_rate),
         message: None,
+        debug,
+        panel: Panel::new(),
+        debug_open: options.debug,
+        debug_command: None,
     };
+    fe.paused = options.debug;
 
     let mut events = sdl.event_pump()?;
     let mut samples = Vec::with_capacity(4096);
@@ -263,6 +389,19 @@ pub fn run(options: &Options) -> Result<(), String> {
         for event in events.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
+                Event::KeyDown {
+                    scancode: Some(code),
+                    keycode,
+                    window_id,
+                    ..
+                } if fe.debug_open && window_id == debug_window_id => {
+                    if matches!(code, Scancode::F1 | Scancode::Grave) {
+                        fe.debug_open = false;
+                    } else if let Some(key) = debugger_key(code, keycode) {
+                        // Key repeat is welcome here: hold S to keep stepping.
+                        fe.debugger_key(key);
+                    }
+                }
                 Event::KeyDown {
                     scancode: Some(code),
                     repeat,
@@ -337,6 +476,16 @@ pub fn run(options: &Options) -> Result<(), String> {
                     }
                 }
                 Event::Window {
+                    window_id,
+                    win_event: WindowEvent::Close,
+                    ..
+                } => {
+                    if window_id == main_window_id {
+                        break 'main;
+                    }
+                    fe.debug_open = false;
+                }
+                Event::Window {
                     win_event: WindowEvent::FocusLost,
                     ..
                 } => {
@@ -349,10 +498,14 @@ pub fn run(options: &Options) -> Result<(), String> {
         fe.update_inputs();
 
         // --- Emulate ---------------------------------------------------------
+        if let Some(command) = fe.debug_command.take() {
+            fe.run_debug_command(command);
+        }
         let run = !fe.paused || std::mem::take(&mut fe.step_frame);
         if run {
             if fe.rewinding {
                 if fe.rewind.step_back(&mut fe.session.genesis) {
+                    fe.debug.forget_position();
                     fe.session.genesis.run_frame();
                 }
             } else {
@@ -362,7 +515,19 @@ pub fn run(options: &Options) -> Result<(), String> {
                     1
                 };
                 for _ in 0..count {
-                    fe.session.genesis.run_frame();
+                    // The fast path, unless the debugger has work to do.
+                    if fe.debug.breakpoints().is_empty() && !fe.debug.in_frame() {
+                        fe.session.genesis.run_frame();
+                    } else if let Stop::Breakpoint(pc) = fe.debug.run_frame(&mut fe.session.genesis)
+                    {
+                        fe.session.print_trace();
+                        fe.paused = true;
+                        fe.debug_open = true;
+                        fe.panel.follow_pc();
+                        fe.panel.set_status(format!("Breakpoint at ${pc:06X}"));
+                        fe.notify(format!("Breakpoint at ${pc:06X}"));
+                        break;
+                    }
                     fe.rewind.record(&fe.session.genesis);
                     fe.session.print_trace();
                 }
@@ -441,6 +606,54 @@ pub fn run(options: &Options) -> Result<(), String> {
             target,
         )?;
         canvas.present();
+
+        // --- Debugger window -------------------------------------------------------
+        if fe.debug_open != debug_shown {
+            let window = debug_canvas.window_mut();
+            if fe.debug_open {
+                window.show();
+                window.raise();
+            } else {
+                window.hide();
+            }
+            debug_shown = fe.debug_open;
+        }
+        if fe.debug_open {
+            let picture = fe.panel.draw(&fe.session.genesis, &fe.debug, fe.paused);
+            debug_texture
+                .with_lock(None, |buffer, pitch| {
+                    for (row, line) in picture
+                        .pixels
+                        .chunks(picture.width)
+                        .zip(buffer.chunks_mut(pitch))
+                    {
+                        for (dst, &src) in line.chunks_exact_mut(4).zip(row) {
+                            dst.copy_from_slice(&(src | 0xFF00_0000).to_ne_bytes());
+                        }
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            let (ww, wh) = debug_canvas.output_size()?;
+            let scale = (f64::from(ww) / debugger::WIDTH as f64)
+                .min(f64::from(wh) / debugger::HEIGHT as f64);
+            let (w, h) = (
+                (debugger::WIDTH as f64 * scale) as u32,
+                (debugger::HEIGHT as f64 * scale) as u32,
+            );
+            debug_canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+            debug_canvas.clear();
+            debug_canvas.copy(
+                &debug_texture,
+                None,
+                Rect::new(
+                    ((ww - w.min(ww)) / 2) as i32,
+                    ((wh - h.min(wh)) / 2) as i32,
+                    w.max(1),
+                    h.max(1),
+                ),
+            )?;
+            debug_canvas.present();
+        }
 
         // --- Housekeeping ----------------------------------------------------------
         let mut status = title.clone();
