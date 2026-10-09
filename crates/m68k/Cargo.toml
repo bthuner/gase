@@ -1,0 +1,13 @@
+[package]
+name = "gase-m68k"
+description = "Motorola 68000 CPU core (part of the gase Mega Drive emulator)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gase-savestate.workspace = true
+
+[lints]
+workspace = true
