@@ -4,6 +4,7 @@
 mod common;
 
 use common::{Rom, VDP_CTRL, VDP_DATA};
+use gase_core::{Cartridge, Config, Genesis};
 
 #[test]
 fn backdrop_colour_reaches_the_frame() {
