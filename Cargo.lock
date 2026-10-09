@@ -29,6 +29,7 @@ dependencies = [
  "gase-m68k",
  "gase-savestate",
  "gase-sound",
+ "gase-vdp",
  "gase-z80",
 ]
 
