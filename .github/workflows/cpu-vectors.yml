@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu: [z80]
+        cpu: [m68k, z80]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
