@@ -232,10 +232,10 @@ pub(crate) enum Operand {
     Data(u8),
     Addr(u8),
     Mem(u32),
-    /// `(An)+`: memory at the address, with `An` incremented only once the
-    /// first access has succeeded (an address error leaves `An` untouched).
-    /// Reading performs the increment; a read-modify-write's second access
-    /// does not repeat it.
+    /// `(An)+`: memory at the address. Reading performs the increment (even
+    /// if the read then faults); writing does not, so a read-modify-write
+    /// increments once. `MOVE` increments after its write, so a faulting
+    /// `MOVE` destination leaves `An` untouched.
     PostInc(u8, u32),
     Imm(u32),
 }
@@ -342,9 +342,8 @@ impl M68k {
             Operand::Addr(r) => self.a[r as usize] & size.mask(),
             Operand::Mem(addr) => self.read_sized(bus, addr, size)?,
             Operand::PostInc(reg, addr) => {
-                let value = self.read_sized(bus, addr, size)?;
                 self.post_increment(reg, size);
-                value
+                self.read_sized(bus, addr, size)?
             }
             Operand::Imm(value) => value,
         })
