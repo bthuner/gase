@@ -56,10 +56,10 @@
 //! granularity except the busy flag (see [`Ym2612::read_status`]), so stepping
 //! one whole sample at a time is both exact enough and fast.
 
-mod filter;
-mod psg;
-mod resampler;
-mod ym2612;
+pub mod filter;
+pub mod psg;
+pub mod resampler;
+pub mod ym2612;
 
 pub use filter::{DcBlocker, LowPass};
 pub use psg::Psg;

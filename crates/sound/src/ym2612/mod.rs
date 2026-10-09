@@ -64,7 +64,7 @@
 //! ```
 //!
 //! The top 10 bits of the accumulator form the phase: 1024 steps per period.
-//! See [`tables::phase_increment`](self::tables).
+//! See `phase_increment` in `tables.rs`.
 //!
 //! ## Sine without multiplying: log-sin and exp ROMs
 //!
@@ -72,7 +72,7 @@
 //! entries), *adds* the envelope's attenuation (already logarithmic: dB), and
 //! converts back to linear with a 256-entry `2^x` table and a shift. The
 //! output is a 14-bit signed number. Modulation is added to the phase before
-//! the lookup. Details in the `tables` module.
+//! the lookup. Details in `tables.rs`.
 //!
 //! ## Envelope generator (ADSR)
 //!
@@ -98,7 +98,7 @@
 //! scaling (KS) adds part of the note's key code so that high notes are
 //! shorter. The envelope is clocked every 3 samples; a global 12-bit counter
 //! decides which rates step on this tick and by how much (see
-//! `tables::EG_INC`): 64 rates spanning from minutes to under a millisecond.
+//! `EG_INC` in `tables.rs`): 64 rates spanning from minutes to under a millisecond.
 //!
 //! ## SSG-EG
 //!

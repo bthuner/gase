@@ -20,7 +20,7 @@
 //!
 //! # What we do: windowed-sinc, polyphase
 //!
-//! Each output sample is a weighted sum of [`TAPS`] = 32 input samples. The
+//! Each output sample is a weighted sum of `TAPS` = 32 input samples. The
 //! weights are a `sinc` low-pass truncated by a Kaiser window (β = 7, about
 //! 70 dB of stop-band attenuation), with its cut-off just below the smaller
 //! of the two Nyquist frequencies. The weights depend on where the output
@@ -44,7 +44,7 @@
 use std::fmt;
 
 /// Filter length in input samples. The output is delayed by `TAPS / 2`.
-pub(crate) const TAPS: usize = 32;
+const TAPS: usize = 32;
 /// Number of tabulated fractional positions.
 const PHASES: usize = 256;
 /// Kaiser window shape parameter (higher: less ripple, wider transition).
