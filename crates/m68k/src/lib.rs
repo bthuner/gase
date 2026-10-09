@@ -42,7 +42,7 @@
 //! Every instruction is one 16-bit opcode word followed by 0–4 extension
 //! words (immediates, displacements, absolute addresses). Most instructions
 //! take one or two *effective addresses* (EAs), encoded in 6 bits as a 3-bit
-//! mode and a 3-bit register (see [`ea`](crate) module docs):
+//! mode and a 3-bit register (the `ea` module has the full encoding):
 //!
 //! | Syntax        | Meaning                                         |
 //! |---------------|-------------------------------------------------|
@@ -93,6 +93,53 @@
 //! Interrupts come in on three priority lines (levels 1–7). A level is
 //! accepted when it is greater than the mask in SR; level 7 cannot be masked.
 //! The Mega Drive uses *autovectors*: the vector number is simply 24 + level.
+//!
+//! ## Using the core
+//!
+//! ```
+//! use gase_m68k::{Bus, M68k};
+//!
+//! struct Ram(Vec<u8>);
+//! impl Bus for Ram {
+//!     fn read_byte(&mut self, a: u32) -> u8 { self.0[a as usize] }
+//!     fn read_word(&mut self, a: u32) -> u16 {
+//!         u16::from_be_bytes([self.0[a as usize], self.0[a as usize + 1]])
+//!     }
+//!     fn write_byte(&mut self, a: u32, v: u8) { self.0[a as usize] = v }
+//!     fn write_word(&mut self, a: u32, v: u16) {
+//!         self.0[a as usize..a as usize + 2].copy_from_slice(&v.to_be_bytes())
+//!     }
+//! }
+//!
+//! let mut ram = Ram(vec![0; 0x10000]);
+//! ram.0[0..8].copy_from_slice(&[0, 0, 0x80, 0, 0, 0, 0x10, 0]); // SSP $8000, PC $1000
+//! ram.0[0x1000..0x1004].copy_from_slice(&[0x70, 0x2A, 0x4E, 0x71]); // moveq #42,d0 ; nop
+//! let mut cpu = M68k::new();
+//! cpu.reset(&mut ram);
+//! assert_eq!(cpu.step(&mut ram), 4); // cycles
+//! assert_eq!(cpu.d[0], 42);
+//! ```
+//!
+//! Conventions for system integrators:
+//!
+//! * [`M68k::step`] runs one instruction *or* one exception (trace,
+//!   interrupt) *or* idles 4 cycles while stopped/halted, and returns the
+//!   68000 clock cycles used (bus cycles count 4 each, no wait states; add
+//!   any wait states in the system).
+//! * The interrupt level set with [`M68k::set_interrupt_level`] is sampled
+//!   at the start of each `step`; levels 1–6 are level-sensitive, level 7
+//!   triggers on its rising edge. Acknowledge happens through
+//!   [`Bus::interrupt_acknowledge`]; an autovectored interrupt costs 44
+//!   cycles.
+//! * All bus accesses of an instruction happen inside `step`, in hardware
+//!   order, but with no per-access timestamps.
+//!
+//! ## Accuracy
+//!
+//! The core passes every one of the ~310 000 SingleStepTests/m68000 vectors
+//! (generated from MAME's microcode-level 68000) including address error
+//! frames, and every vector of Tom Harte's 1 M-test suite except those shown
+//! to contradict the real microcode (see `tests/`).
 
 mod arith;
 mod bcd;
@@ -133,4 +180,12 @@ pub trait Bus {
     }
     /// The `RESET` instruction pulses the reset line for external devices.
     fn reset_devices(&mut self) {}
+    /// The write half of `TAS`'s indivisible read-modify-write cycle.
+    ///
+    /// Defaults to [`Bus::write_byte`]. The Mega Drive's bus arbiter does not
+    /// support this cycle type for its main RAM, so the write is lost there;
+    /// a system bus can model that by overriding this method.
+    fn tas_write_byte(&mut self, addr: u32, value: u8) {
+        self.write_byte(addr, value);
+    }
 }

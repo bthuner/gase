@@ -304,3 +304,34 @@ fn user_and_supervisor_stacks_are_separate() {
     assert_eq!(cpu.usp(), 0x5000);
     assert_eq!(cpu.ssp(), STACK);
 }
+
+/// Rough throughput check: `cargo test -p gase-m68k --release -- --ignored speed --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+fn speed() {
+    // A loop mixing moves, ALU ops, memory accesses, shifts and a branch:
+    //   loop: move.l (a0)+,d1 ; add.l d1,d2 ; lsl.w #3,d3 ; move.w d2,-(a1)
+    //         addq.w #1,d4 ; cmp.w #$8000,d4 ; dbf d0,loop ; bra start
+    let code = [
+        0x2218, 0xD481, 0xE74B, 0x3302, 0x5244, 0xB87C, 0x8000, 0x51C8, 0xFFF0, 0x6000, 0xFFEC,
+    ];
+    let (mut cpu, mut ram) = machine(&[0x41F8, 0x4000, 0x43F8, 0x6000, 0x303C, 0x0FFF]);
+    ram.poke_words(CODE + 12, &code);
+    let start = std::time::Instant::now();
+    let (mut cycles, mut instructions) = (0u64, 0u64);
+    while cycles < 500_000_000 {
+        cycles += u64::from(cpu.step(&mut ram));
+        instructions += 1;
+        if instructions % 10_000 == 0 {
+            cpu.a[0] = 0x4000;
+            cpu.a[1] = 0x6000;
+        }
+    }
+    let secs = start.elapsed().as_secs_f64();
+    println!(
+        "{:.1} M instructions/s, {:.0} MHz emulated ({:.0}x a 7.67 MHz Mega Drive)",
+        instructions as f64 / secs / 1e6,
+        cycles as f64 / secs / 1e6,
+        cycles as f64 / secs / 7.67e6
+    );
+}

@@ -20,7 +20,7 @@
 use crate::Bus;
 use crate::cpu::M68k;
 use crate::decode::{Instr, Op};
-use crate::ea::{Mode, Size};
+use crate::ea::{Mode, Operand, Size};
 use crate::exceptions::Exec;
 
 impl M68k {
@@ -80,10 +80,11 @@ impl M68k {
         let operand = self.resolve(bus, i.dst, Size::Byte);
         let value = self.read_operand(bus, operand, Size::Byte)?;
         self.set_logic_flags(value, Size::Byte);
-        if i.dst.is_memory() {
-            // The read-modify-write cycle: 2 cycles between read and write.
-            self.idle(2);
-            self.write_operand(bus, operand, Size::Byte, value | 0x80)?;
+        if let Operand::Mem(addr) | Operand::PostInc(_, addr) = operand {
+            // The read-modify-write cycle: 2 cycles between the read and the
+            // 4-cycle write, which goes through its own bus hook.
+            self.idle(2 + 4);
+            bus.tas_write_byte(addr & 0x00FF_FFFF, value as u8 | 0x80);
             self.prefetch(bus);
         } else {
             self.write_operand(bus, operand, Size::Byte, value | 0x80)?;
