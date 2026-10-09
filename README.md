@@ -47,6 +47,11 @@ Esc           Quit
 ```
 
 Game controllers are detected automatically (first controller = player 1).
+
+gase emulates the 68000 exactly, including *address errors*: a word access
+at an odd address crashes the game, as on real hardware. A few homebrew
+programs contain such bugs and only work in emulators that ignore them; run
+those with `--no-address-errors`.
 Battery saves (`game.srm`), save states (`game.state0`..`9`) and screenshots
 are stored next to the ROM. Run `gase --help` for all options.
 

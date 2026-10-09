@@ -41,6 +41,10 @@ pub struct Config {
     pub sample_rate: u32,
     /// Emulate the model 1 console's analogue low-pass filter.
     pub low_pass: bool,
+    /// Raise 68000 address errors on odd word accesses, as the hardware does.
+    /// Turning this off mimics lenient emulators, which a few buggy homebrew
+    /// programs depend on (see [`gase_m68k::M68k::set_address_errors`]).
+    pub address_errors: bool,
 }
 
 impl Default for Config {
@@ -49,6 +53,7 @@ impl Default for Config {
             region: None,
             sample_rate: 48_000,
             low_pass: true,
+            address_errors: true,
         }
     }
 }
@@ -193,6 +198,7 @@ impl Genesis {
         };
         genesis.hw.io.ports[0].device = Device::SixButton;
         genesis.hw.io.ports[1].device = Device::SixButton;
+        genesis.m68k.set_address_errors(config.address_errors);
         genesis.m68k.reset(&mut genesis.hw);
         genesis
     }

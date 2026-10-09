@@ -17,6 +17,8 @@ OPTIONS:
     --integer-scale       Only scale by whole multiples (sharpest pixels)
     --no-filter           Disable the model 1 audio low-pass filter
     --no-audio            Run without sound (paced by the display instead)
+    --no-address-errors   Ignore odd-address word accesses like lenient emulators
+                          (for buggy homebrew; real hardware would crash)
     --headless            Run without a window (see the options below)
     --frames <N>          Headless: number of frames to run (default: 600)
     --screenshot <PATH>   Headless: save the last frame as PNG
@@ -50,6 +52,7 @@ pub struct Options {
     pub integer_scale: bool,
     pub low_pass: bool,
     pub audio: bool,
+    pub address_errors: bool,
     pub headless: bool,
     pub frames: u64,
     pub screenshot: Option<PathBuf>,
@@ -93,6 +96,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         integer_scale: false,
         low_pass: true,
         audio: true,
+        address_errors: true,
         headless: false,
         frames: 600,
         screenshot: None,
@@ -112,6 +116,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--integer-scale" => o.integer_scale = true,
             "--no-filter" => o.low_pass = false,
             "--no-audio" => o.audio = false,
+            "--no-address-errors" => o.address_errors = false,
             "--headless" => o.headless = true,
             "--frames" => o.frames = parse_number("--frames", &value("--frames")?)?,
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
@@ -148,7 +153,7 @@ mod tests {
         let o = run(&["sonic.bin"]).unwrap();
         assert_eq!(o.rom, PathBuf::from("sonic.bin"));
         assert_eq!(o.scale, 3);
-        assert!(o.low_pass && o.audio && !o.headless);
+        assert!(o.low_pass && o.audio && o.address_errors && !o.headless);
     }
 
     #[test]
