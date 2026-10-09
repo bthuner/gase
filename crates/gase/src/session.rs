@@ -30,6 +30,7 @@ impl Session {
             region: options.region,
             sample_rate,
             low_pass: options.low_pass,
+            address_errors: options.address_errors,
         };
         let mut session = Self {
             genesis: Genesis::new(cart, &config),

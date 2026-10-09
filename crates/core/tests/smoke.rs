@@ -103,3 +103,34 @@ fn audio_is_produced_at_the_host_rate() {
         "got {frames} sample frames"
     );
 }
+
+#[test]
+fn lenient_address_errors_option() {
+    // move.l #$11223344,d0 ; move.w d0,($FF0001).l ; spin
+    let mut rom = Rom::new();
+    rom.vector(3, 0x400) // address error -> handler that marks RAM
+        .words(&[0x203C, 0x1122, 0x3344, 0x33C0, 0x00FF, 0x0001])
+        .spin();
+    rom.at(0x400).move_w(0xDEAD, 0xFF_0010).spin();
+
+    let mut strict = rom.console();
+    strict.run_frame();
+    assert_eq!(
+        &strict.hw.ram[0x10..0x12],
+        &[0xDE, 0xAD],
+        "hardware: address error"
+    );
+
+    let config = Config {
+        address_errors: false,
+        ..Config::default()
+    };
+    let mut lenient = Genesis::new(Cartridge::from_bytes(&rom.bytes).unwrap(), &config);
+    lenient.run_frame();
+    assert_eq!(
+        &lenient.hw.ram[0..2],
+        &[0x33, 0x44],
+        "lenient: written at $FF0000"
+    );
+    assert_eq!(&lenient.hw.ram[0x10..0x12], &[0, 0]);
+}
