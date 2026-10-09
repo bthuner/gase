@@ -35,7 +35,7 @@ const CASES: &[Case] = &[
         path: "240p-test-suite/240pSuite-1.23.bin",
         frames: 300,
         presses: &[],
-        expected: 0,
+        expected: 0xead09c2ed0bcdcb4,
     },
     Case {
         name: "240p test suite PLUGE",
@@ -43,39 +43,38 @@ const CASES: &[Case] = &[
         frames: 400,
         // Test Patterns -> first entry.
         presses: &[(300, 305, Buttons::A), (330, 335, Buttons::A)],
-        expected: 0,
+        expected: 0x92f08ddbca1d550a,
     },
     Case {
         name: "genmd-imgrom test pattern",
         path: "genmd-imgrom-testpattern/testpattern.bin",
         frames: 120,
         presses: &[],
-        expected: 0,
+        expected: 0x1b56fe5fc7f7fa4a,
     },
+    // Airstriker's compiler-generated code later writes a word to an odd
+    // address, which faults on a real 68000 (lenient emulators ignore it),
+    // so only its boot sequence is checked.
     Case {
-        name: "Airstriker in game",
+        name: "Airstriker SEGA logo",
         path: "airstriker/Airstriker.md",
-        frames: 900,
-        presses: &[
-            (300, 305, Buttons::START),
-            (400, 405, Buttons::START),
-            (500, 900, Buttons::RIGHT),
-        ],
-        expected: 0,
+        frames: 60,
+        presses: &[],
+        expected: 0x4d6a175bde9be241,
     },
     Case {
         name: "Right 2 Repair title",
         path: "right2repair-ggj2020/rom.bin",
         frames: 600,
         presses: &[],
-        expected: 0,
+        expected: 0x45482c258a415507,
     },
     Case {
         name: "The Spiral demo",
         path: "resistance-the-spiral/rom.bin",
         frames: 1200,
         presses: &[],
-        expected: 0,
+        expected: 0xf03b69da9c72dc09,
     },
 ];
 
