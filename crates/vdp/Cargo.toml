@@ -1,0 +1,13 @@
+[package]
+name = "gase-vdp"
+description = "Sega 315-5313 Video Display Processor (part of the gase Mega Drive emulator)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gase-savestate.workspace = true
+
+[lints]
+workspace = true

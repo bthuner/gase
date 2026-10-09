@@ -11,6 +11,7 @@ gase-savestate.workspace = true
 gase-m68k.workspace = true
 gase-z80.workspace = true
 gase-sound.workspace = true
+gase-vdp.workspace = true
 
 [lints]
 workspace = true
