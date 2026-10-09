@@ -63,6 +63,9 @@ impl M68k {
         let result = match i.op {
             Op::Btst => {
                 self.prefetch(bus);
+                if i.dst.mode == Mode::Immediate {
+                    self.idle(2);
+                }
                 return Ok(());
             }
             Op::Bchg => value ^ mask,

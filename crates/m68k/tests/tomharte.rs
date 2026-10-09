@@ -10,17 +10,17 @@
 //!
 //! Environment variables:
 //! * `GASE_M68K_TESTS`: vector directory (default `target/test-vectors/m68000`);
-//! * `GASE_M68K_FILTER`: only run files whose name contains this;
-//! * `GASE_M68K_VERBOSE=n`: print details of the first n failures per file.
+//! * `GASE_M68K_FILTER`, `GASE_M68K_VERBOSE`: see `common/mod.rs`.
 //!
-//! Some upstream vectors are known to disagree with real hardware; they are
-//! listed in [`KNOWN_BAD`] and reported separately.
+//! Some upstream vectors are known to disagree with real hardware (checked
+//! against the MAME-derived suite in `mame.rs`); [`known_bad`] identifies
+//! them and they are reported separately.
 
-use std::collections::HashMap;
-use std::fmt::Write as _;
-use std::path::PathBuf;
+mod common;
 
-use gase_m68k::{Bus, M68k};
+use std::path::Path;
+
+use common::{CpuState, Test};
 
 // ---------------------------------------------------------------------------
 // A minimal JSON parser (the test vectors only use objects, arrays, strings
@@ -177,156 +177,46 @@ fn parse_json(bytes: &[u8]) -> Json {
 }
 
 // ---------------------------------------------------------------------------
-// Test bus: 16 MiB of RAM, reset between tests by remembering what changed.
+// Conversion to the common format
 // ---------------------------------------------------------------------------
 
-struct TestBus {
-    ram: Vec<u8>,
-    touched: Vec<u32>,
-    log: Vec<String>,
-    logging: bool,
-}
-
-impl TestBus {
-    fn new() -> Self {
-        Self { ram: vec![0; 1 << 24], touched: Vec::new(), log: Vec::new(), logging: false }
+fn state(json: &Json) -> CpuState {
+    let mut regs = [0; 15];
+    for (i, reg) in regs.iter_mut().enumerate() {
+        let name = if i < 8 { format!("d{i}") } else { format!("a{}", i - 8) };
+        *reg = json.get(&name).u32();
     }
-    fn poke(&mut self, addr: u32, value: u8) {
-        self.ram[addr as usize] = value;
-        self.touched.push(addr);
-    }
-    fn clear(&mut self) {
-        for &addr in &self.touched {
-            self.ram[addr as usize] = 0;
-        }
-        self.touched.clear();
-        self.log.clear();
-    }
-}
-
-impl Bus for TestBus {
-    fn read_byte(&mut self, addr: u32) -> u8 {
-        let v = self.ram[addr as usize];
-        if self.logging {
-            self.log.push(format!("r.b {addr} = {v}"));
-        }
-        v
-    }
-    fn read_word(&mut self, addr: u32) -> u16 {
-        let v = u16::from_be_bytes([self.ram[addr as usize], self.ram[(addr as usize + 1) & 0xFF_FFFF]]);
-        if self.logging {
-            self.log.push(format!("r.w {addr} = {v}"));
-        }
-        v
-    }
-    fn write_byte(&mut self, addr: u32, value: u8) {
-        if self.logging {
-            self.log.push(format!("w.b {addr} = {value}"));
-        }
-        self.poke(addr, value);
-    }
-    fn write_word(&mut self, addr: u32, value: u16) {
-        if self.logging {
-            self.log.push(format!("w.w {addr} = {value}"));
-        }
-        let [hi, lo] = value.to_be_bytes();
-        self.poke(addr, hi);
-        self.poke((addr + 1) & 0xFF_FFFF, lo);
+    let prefetch = json.get("prefetch").array();
+    CpuState {
+        regs,
+        usp: json.get("usp").u32(),
+        ssp: json.get("ssp").u32(),
+        sr: json.get("sr").u32() as u16,
+        pc: json.get("pc").u32(),
+        prefetch: [prefetch[0].u32() as u16, prefetch[1].u32() as u16],
+        ram: json
+            .get("ram")
+            .array()
+            .iter()
+            .map(|pair| {
+                let pair = pair.array();
+                (pair[0].u32(), pair[1].u32() as u8)
+            })
+            .collect(),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Running the tests
-// ---------------------------------------------------------------------------
-
-/// Vectors that disagree with real hardware or with the documented
-/// behaviour this core implements: (file, reason). Failures in these files
-/// are reported but do not fail the run.
-const KNOWN_BAD: &[(&str, &str)] = &[];
-
-const REGS: [&str; 15] = ["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "a6"];
-
-fn setup(cpu: &mut M68k, bus: &mut TestBus, state: &Json) {
-    cpu.set_sr(state.get("sr").u32() as u16);
-    cpu.set_usp(state.get("usp").u32());
-    cpu.set_ssp(state.get("ssp").u32());
-    for (i, name) in REGS.iter().enumerate() {
-        let value = state.get(name).u32();
-        if i < 8 {
-            cpu.d[i] = value;
-        } else {
-            cpu.a[i - 8] = value;
-        }
-    }
-    let prefetch = state.get("prefetch").array();
-    cpu.set_pc_and_prefetch(state.get("pc").u32(), [prefetch[0].u32() as u16, prefetch[1].u32() as u16]);
-    for pair in state.get("ram").array() {
-        let pair = pair.array();
-        bus.poke(pair[0].u32() & 0xFF_FFFF, pair[1].u32() as u8);
-    }
-}
-
-/// Compare the CPU and memory to the expected state; returns a description
-/// of every mismatch.
-fn compare(cpu: &M68k, bus: &TestBus, state: &Json) -> String {
-    let mut errors = String::new();
-    for (i, name) in REGS.iter().enumerate() {
-        let actual = if i < 8 { cpu.d[i] } else { cpu.a[i - 8] };
-        let expected = state.get(name).u32();
-        if actual != expected {
-            let _ = write!(errors, " {name}={actual:08X} (want {expected:08X})");
-        }
-    }
-    for (name, actual) in [("usp", cpu.usp()), ("ssp", cpu.ssp()), ("pc", cpu.pc()), ("sr", u32::from(cpu.sr()))] {
-        let expected = state.get(name).u32();
-        if actual != expected {
-            let _ = write!(errors, " {name}={actual:08X} (want {expected:08X})");
-        }
-    }
-    for pair in state.get("ram").array() {
-        let pair = pair.array();
-        let addr = pair[0].u32() & 0xFF_FFFF;
-        let expected = pair[1].u32() as u8;
-        let actual = bus.ram[addr as usize];
-        if actual != expected {
-            let _ = write!(errors, " [{addr:06X}]={actual:02X} (want {expected:02X})");
-        }
-    }
-    errors
-}
-
-#[derive(Default)]
-struct FileResult {
-    total: usize,
-    state_failures: usize,
-    cycle_failures: usize,
-}
-
-fn run_file(path: &PathBuf, verbose: usize, cpu: &mut M68k, bus: &mut TestBus) -> FileResult {
+fn load(path: &Path) -> Vec<Test> {
     let bytes = std::fs::read(path).expect("read test file");
-    let tests = parse_json(&bytes);
-    let mut result = FileResult::default();
-    let mut shown = 0;
-    for test in tests.array() {
-        result.total += 1;
-        bus.clear();
-        *cpu = M68k::new();
-        setup(cpu, bus, test.get("initial"));
-        bus.logging = shown < verbose;
-        let cycles = cpu.step(bus);
-        let errors = compare(cpu, bus, test.get("final"));
-        let expected_cycles = test.get("length").u32();
-        let cycles_ok = cycles == expected_cycles;
-        if !errors.is_empty() {
-            result.state_failures += 1;
-        } else if !cycles_ok {
-            result.cycle_failures += 1;
-        }
-        if (!errors.is_empty() || !cycles_ok) && shown < verbose {
-            shown += 1;
-            println!("  FAIL {}: cycles {cycles} (want {expected_cycles}){errors}", test.get("name").str());
-            println!("    ours:   {}", bus.log.join(", "));
-            let theirs: Vec<String> = test
+    parse_json(&bytes)
+        .array()
+        .iter()
+        .map(|test| Test {
+            name: test.get("name").str().to_owned(),
+            initial: state(test.get("initial")),
+            expected: state(test.get("final")),
+            cycles: test.get("length").u32(),
+            transactions: test
                 .get("transactions")
                 .array()
                 .iter()
@@ -337,59 +227,28 @@ fn run_file(path: &PathBuf, verbose: usize, cpu: &mut M68k, bus: &mut TestBus) -
                         kind => format!("{kind}{} {} = {}", t[4].str(), t[3].num(), t[5].num()),
                     }
                 })
-                .collect();
-            println!("    theirs: {}", theirs.join(", "));
-        }
-    }
-    result
+                .collect(),
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Known-bad vectors
+// ---------------------------------------------------------------------------
+
+/// Upstream vectors whose expected results contradict the real 68000, as
+/// established by the microcode-derived MAME vectors (`mame.rs`) and
+/// Motorola's documentation.
+const KNOWN_BAD_NOTES: &[(&str, &str)] = &[];
+
+fn known_bad(file: &str, test: &Test) -> Option<&'static str> {
+    let _ = (file, test);
+    None
 }
 
 #[test]
 #[ignore = "needs downloaded vectors: scripts/fetch-m68k-tests.sh"]
 fn tom_harte_68000() {
-    let dir = std::env::var_os("GASE_M68K_TESTS").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-vectors/m68000"),
-        PathBuf::from,
-    );
-    let filter = std::env::var("GASE_M68K_FILTER").unwrap_or_default();
-    let verbose: usize = std::env::var("GASE_M68K_VERBOSE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|_| panic!("no test vectors in {}; run scripts/fetch-m68k-tests.sh", dir.display()))
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .filter(|p| p.file_name().unwrap().to_string_lossy().contains(&filter))
-        .collect();
-    files.sort();
-    assert!(!files.is_empty(), "no *.json files in {}", dir.display());
-
-    let mut cpu = M68k::new();
-    let mut bus = TestBus::new();
-    let mut summary: HashMap<&str, usize> = HashMap::new();
-    let mut unexpected = 0;
-    for path in &files {
-        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let r = run_file(path, verbose, &mut cpu, &mut bus);
-        let failed = r.state_failures + r.cycle_failures;
-        let known = KNOWN_BAD.iter().find(|(file, _)| *file == name);
-        println!(
-            "{name:<14} {:>5}/{:<5} passed  ({} state, {} cycle-only failures){}",
-            r.total - failed,
-            r.total,
-            r.state_failures,
-            r.cycle_failures,
-            known.map_or(String::new(), |(_, why)| format!("  [known bad upstream: {why}]")),
-        );
-        *summary.entry("total").or_default() += r.total;
-        *summary.entry("state").or_default() += r.state_failures;
-        *summary.entry("cycles").or_default() += r.cycle_failures;
-        if known.is_none() {
-            unexpected += failed;
-        }
-    }
-    println!(
-        "TOTAL: {} tests, {} state failures, {} cycle-only failures",
-        summary["total"], summary["state"], summary["cycles"]
-    );
-    assert_eq!(unexpected, 0, "{unexpected} unexpected failures");
+    let dir = common::vector_dir("GASE_M68K_TESTS", "m68000");
+    common::run_suite("Tom Harte 68000", &dir, ".json", load, known_bad, KNOWN_BAD_NOTES);
 }

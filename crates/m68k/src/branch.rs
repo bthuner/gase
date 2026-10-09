@@ -71,7 +71,8 @@ impl M68k {
         self.set_d(r, Size::Word, u32::from(counter));
         self.idle(2);
         if counter != 0xFFFF {
-            let target = self.branch_target();
+            let base = self.pc;
+            let target = base.wrapping_add(self.take_ext() as i16 as u32);
             self.jump(bus, target)
         } else {
             // Loop finished: the 68000 fetches from the branch target anyway

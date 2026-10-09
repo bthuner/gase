@@ -106,9 +106,17 @@ impl M68k {
             // to D0 at decreasing addresses leaves them in ascending order.
             for bit in 0..16 {
                 if mask & (1 << bit) != 0 {
-                    addr = addr.wrapping_sub(size.bytes());
                     let value = self.movem_register(15 - bit);
-                    self.write_sized(bus, addr, size, value)?;
+                    // Longs go out low word first (descending addresses).
+                    if size == Size::Long {
+                        addr = addr.wrapping_sub(2);
+                        self.write_word(bus, addr, value as u16)?;
+                        addr = addr.wrapping_sub(2);
+                        self.write_word(bus, addr, (value >> 16) as u16)?;
+                    } else {
+                        addr = addr.wrapping_sub(2);
+                        self.write_word(bus, addr, value as u16)?;
+                    }
                 }
             }
             self.a[r] = addr;
@@ -129,27 +137,35 @@ impl M68k {
     pub(crate) fn op_movem_to_registers<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
         let mask = self.read_ext(bus);
         let size = i.size;
-        let mut addr = if i.src.mode == Mode::PostInc {
+        let post_increment = i.src.mode == Mode::PostInc;
+        let start = if post_increment {
             self.a[i.src.reg as usize]
         } else {
             self.control_address(bus, i.src)
         };
-        for bit in 0..16 {
-            if mask & (1 << bit) != 0 {
-                let value = size.sign_extend(self.read_sized(bus, addr, size)?);
-                if bit < 8 {
-                    self.d[bit] = value;
-                } else {
-                    self.a[bit - 8] = value;
+        let mut addr = start;
+        let result = (|| -> Exec {
+            for bit in 0..16 {
+                if mask & (1 << bit) != 0 {
+                    let value = size.sign_extend(self.read_sized(bus, addr, size)?);
+                    if bit < 8 {
+                        self.d[bit] = value;
+                    } else {
+                        self.a[bit - 8] = value;
+                    }
+                    addr = addr.wrapping_add(size.bytes());
                 }
-                addr = addr.wrapping_add(size.bytes());
             }
+            // The surplus read.
+            self.read_word(bus, addr)?;
+            Ok(())
+        })();
+        if post_increment {
+            // An address error can only strike the first access; by then the
+            // address register has already been advanced by one word.
+            self.a[i.src.reg as usize] = if result.is_err() { start.wrapping_add(2) } else { addr };
         }
-        // The surplus read.
-        self.read_word(bus, addr)?;
-        if i.src.mode == Mode::PostInc {
-            self.a[i.src.reg as usize] = addr;
-        }
+        result?;
         self.prefetch(bus);
         Ok(())
     }

@@ -73,21 +73,21 @@ impl M68k {
     pub(crate) fn op_chk<B: Bus>(&mut self, bus: &mut B, i: Instr) -> Exec {
         let bound = self.read_ea(bus, i.src, Size::Word)? as u16 as i16;
         let value = self.d[i.dst.reg as usize] as u16 as i16;
+        self.n = value < 0;
         self.z = value == 0;
         self.v = false;
         self.c = false;
-        if value < 0 {
-            self.n = true;
-            self.idle(4);
-        } else if value > bound {
-            self.n = false;
-            self.idle(2);
-        } else {
+        if (0..=bound).contains(&value) {
             self.prefetch(bus);
             self.idle(6);
             return Ok(());
         }
-        self.idle(4);
+        // The microcode first computes `bound - value` and branches on its
+        // sign and overflow; only a negative value whose difference fits in
+        // 16 bits goes through the 2-cycle slower path.
+        let (difference, overflow) = bound.overflowing_sub(value);
+        // (Plus the 4 internal cycles that start every exception.)
+        self.idle(if value < 0 && difference >= 0 && !overflow { 6 } else { 4 });
         let pc = self.pc;
         self.exception(bus, vector::CHK, pc)
     }

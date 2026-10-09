@@ -157,8 +157,9 @@ impl M68k {
             | if fault.access == Access::Write { 0 } else { 0x10 }
             | if fault.access == Access::Fetch { 0x08 } else { 0 }
             | function_code;
-        // The aborted bus cycle still takes its 4 cycles.
-        self.idle(4);
+        // The aborted bus cycle still takes its 4 cycles, then 8 more pass
+        // before the frame is written.
+        self.idle(12);
         let result = (|| -> Exec {
             let sp = self.a[7].wrapping_sub(14);
             self.a[7] = sp;

@@ -215,16 +215,31 @@ impl M68k {
         } else {
             // Both operands are -(An): the decrement penalty is paid once.
             self.idle(2);
-            let src_addr = self.predecrement(i.src.reg, i.size);
-            let s = self.read_sized(bus, src_addr, i.size)?;
-            let dst_addr = self.predecrement(i.dst.reg, i.size);
-            let d = self.read_sized(bus, dst_addr, i.size)?;
+            let s = self.read_predecrement(bus, i.src.reg, i.size)?;
+            let d = self.read_predecrement(bus, i.dst.reg, i.size)?;
+            let dst_addr = self.a[i.dst.reg as usize];
             let sum = op(d, s, self.x, i.size);
             self.set_extended_flags(sum, i.size);
             self.prefetch(bus);
             self.write_sized(bus, dst_addr, i.size, sum.result)?;
         }
         Ok(())
+    }
+
+    /// Read a `-(An)` operand the way `ADDX`/`SUBX` do: a long is read low
+    /// word first, decrementing `An` by 2 before each word, so an odd `An`
+    /// faults at `An - 2` with `An` decremented by only 2.
+    fn read_predecrement<B: Bus>(&mut self, bus: &mut B, reg: u8, size: Size) -> Exec<u32> {
+        if size == Size::Long {
+            let low_addr = self.predecrement(reg, Size::Word);
+            let low = self.read_word(bus, low_addr)?;
+            let high_addr = self.predecrement(reg, Size::Word);
+            let high = self.read_word(bus, high_addr)?;
+            Ok(u32::from(high) << 16 | u32::from(low))
+        } else {
+            let addr = self.predecrement(reg, size);
+            self.read_sized(bus, addr, size)
+        }
     }
 
     /// Flags of ADDX/SUBX/NEGX: Z is only ever cleared.

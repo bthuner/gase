@@ -67,6 +67,9 @@ pub struct M68k {
     /// Level 7 is edge triggered: it is taken once per rising edge, even
     /// though it cannot be masked.
     pub(crate) nmi_pending: bool,
+    /// The last instruction ran with the T bit set: a trace exception is
+    /// due before the next one.
+    pub(crate) trace_pending: bool,
 
     // Bookkeeping for the current `step` only (not part of the save state).
     /// Cycles spent so far in this step.
@@ -124,6 +127,7 @@ impl M68k {
             run_state: RunState::Running,
             ipl: 0,
             nmi_pending: false,
+            trace_pending: false,
             cycles: 0,
             instruction_pc: 0,
             in_group0: false,
@@ -139,6 +143,7 @@ impl M68k {
         self.int_mask = 7;
         self.run_state = RunState::Running;
         self.nmi_pending = false;
+        self.trace_pending = false;
         self.in_group0 = false;
         let read_long =
             |bus: &mut B, addr| u32::from(bus.read_word(addr)) << 16 | u32::from(bus.read_word(addr + 2));
@@ -361,7 +366,7 @@ impl M68k {
         Exception::AddressError(AddressFault {
             address,
             access,
-            pc: self.pc.wrapping_sub(2),
+            pc: self.pc.wrapping_add(2),
         })
     }
 
@@ -549,10 +554,21 @@ impl M68k {
     ///
     /// Returns the number of CPU clock cycles consumed. Idling costs 4
     /// cycles per call.
+    ///
+    /// Exceptions that the hardware processes *between* instructions (trace,
+    /// interrupts) each take a call of their own, in the hardware's priority
+    /// order: an instruction executed with T set is followed by its trace
+    /// exception, then any interrupt is accepted, all before the next
+    /// instruction.
     pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
         self.cycles = 0;
         if self.run_state == RunState::Halted {
             return 4;
+        }
+        if self.trace_pending {
+            self.trace_pending = false;
+            self.trace_exception(bus);
+            return self.cycles;
         }
         if self.interrupt_pending() {
             self.interrupt(bus);
@@ -568,11 +584,9 @@ impl M68k {
         self.instruction_pc = self.pc();
         let instr = self.table.lookup(opcode);
         match self.execute(bus, instr) {
-            Ok(()) => {
-                if tracing {
-                    self.trace_exception(bus);
-                }
-            }
+            // Instructions that trap (TRAP, CHK, ...) are still traced; ones
+            // that are rejected (illegal, privileged) or abort are not.
+            Ok(()) => self.trace_pending = tracing,
             Err(exception) => self.abort_instruction(bus, exception),
         }
         self.cycles
@@ -683,6 +697,7 @@ impl State for M68k {
         run_state.save(w);
         self.ipl.save(w);
         self.nmi_pending.save(w);
+        self.trace_pending.save(w);
     }
 
     fn load(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
@@ -709,6 +724,7 @@ impl State for M68k {
         };
         self.ipl.load(r)?;
         self.nmi_pending.load(r)?;
+        self.trace_pending.load(r)?;
         Ok(())
     }
 }
