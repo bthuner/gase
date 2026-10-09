@@ -169,20 +169,6 @@ pub fn run_tests(file: &str, tests: &[Test], known_bad: KnownBad, cpu: &mut M68k
         if errors.is_empty() && cycles_ok {
             continue;
         }
-        if std::env::var_os("GASE_M68K_AE_STATS").is_some() && cpu.ssp() == test.expected.ssp && test.initial.ssp.wrapping_sub(14) == test.expected.ssp {
-            let w = |ram: &dyn Fn(u32) -> u8, a: u32| u32::from(ram(a)) << 8 | u32::from(ram(a + 1));
-            let exp_ram = |a: u32| test.expected.ram.iter().find(|(x, _)| *x == (a & 0xFF_FFFF)).map_or(0, |(_, v)| *v);
-            let our_ram = |a: u32| bus.ram[(a & 0xFF_FFFF) as usize];
-            let sp = cpu.ssp();
-            let exp_pc = w(&exp_ram, sp + 10) << 16 | w(&exp_ram, sp + 12);
-            let our_pc = w(&our_ram, sp + 10) << 16 | w(&our_ram, sp + 12);
-            let ssw = w(&exp_ram, sp);
-            let kind = if ssw & 0x10 == 0 { "W" } else if ssw & 8 != 0 { "F" } else { "R" };
-            let mut form: String = test.name.split(' ').skip(1).collect::<Vec<_>>().join(" ");
-            for r in 0..8 { form = form.replace(&format!("A{r}"), "An").replace(&format!("D{r}"), "Dn"); }
-            let form = form.rsplit_once(' ').map_or(form.clone(), |(a, _)| a.to_string());
-            println!("AESTAT {file} | {form} | {kind} | {}", exp_pc.wrapping_sub(our_pc) as i32);
-        }
         if known_bad(file, test).is_some() {
             result.excused += 1;
             continue;

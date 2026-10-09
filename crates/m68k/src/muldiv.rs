@@ -107,9 +107,12 @@ impl M68k {
     }
 
     /// Division by zero: the exception is taken after 4 more internal cycles,
-    /// stacking the address of the next instruction.
+    /// stacking the address of the next instruction. N, Z, V and C are
+    /// cleared.
     fn divide_by_zero<B: Bus>(&mut self, bus: &mut B) -> Exec {
         self.idle(4);
+        self.n = false;
+        self.z = false;
         self.v = false;
         self.c = false;
         let pc = self.pc;

@@ -236,14 +236,75 @@ fn load(path: &Path) -> Vec<Test> {
 // Known-bad vectors
 // ---------------------------------------------------------------------------
 
-/// Upstream vectors whose expected results contradict the real 68000, as
-/// established by the microcode-derived MAME vectors (`mame.rs`) and
-/// Motorola's documentation.
-const KNOWN_BAD_NOTES: &[(&str, &str)] = &[];
+/// Upstream vectors whose expected results contradict the real 68000.
+///
+/// The arbiter is the SingleStepTests/m68000 suite (`mame.rs`), generated
+/// from MAME's emulation of the 68000's actual microcode, which this core
+/// passes in full; it also agrees with Motorola's documentation wherever the
+/// two sets differ. Each entry is narrow: only tests matching the described
+/// situation are excused, and only if they fail.
+const KNOWN_BAD_NOTES: &[(&str, &str)] = &[
+    (
+        "address errors (all files)",
+        "these vectors stack a PC that is 0-4 bytes off (sometimes not even the documented \
+         'instruction + 2..10'), set the I/N bit for jump-target faults, update An/flags/IR \
+         at different points and charge 50 instead of 58 cycles; the microcode-derived \
+         vectors define all of these",
+    ),
+    ("ASR", "count > operand size on a negative value: C and X are the sign bit, not 0"),
+    ("ADD.l/SUB.l", "ADDQ.L/SUBQ.L #,An take 8 cycles (as documented), not 6"),
+    ("CHK", "N always reflects the sign of Dn, and the trap timing depends on bound - Dn"),
+    ("DIVU/DIVS", "overflow sets N and clears Z; DIVS signed overflow takes the full-length path"),
+    ("ASL.b", "two corrupt vectors where a byte shift rewrites the upper 24 bits of Dn"),
+    ("LINK", "LINK A7 pushes the value A7 had before the instruction, not the decremented one"),
+    (
+        "DIVU",
+        "the only divide-by-zero vector stacks the DIVU's own address; group 2 traps stack \
+         the address of the next instruction",
+    ),
+];
+
+/// The opcode under test.
+fn opcode(test: &Test) -> u16 {
+    test.initial.prefetch[0]
+}
 
 fn known_bad(file: &str, test: &Test) -> Option<&'static str> {
-    let _ = (file, test);
-    None
+    // Any test whose expected bus activity reads the address error vector.
+    if test.transactions.iter().any(|t| t.starts_with("r.w 12 = ")) {
+        return Some("address error");
+    }
+    let op = opcode(test);
+    let regs = &test.initial.regs;
+    match file {
+        "ASR.b" | "ASR.w" | "ASR.l" if op & 0x20 != 0 && (op >> 6) & 3 != 3 => {
+            let bits = 8 << ((op >> 6) & 3);
+            let count = regs[usize::from((op >> 9) & 7)] % 64;
+            let value = regs[usize::from(op & 7)];
+            (count > bits && (value >> (bits - 1)) & 1 != 0).then_some("ASR carry")
+        }
+        "ADD.l" | "SUB.l" if op & 0xF0F8 == 0x5088 => Some("ADDQ/SUBQ.L An timing"),
+        "CHK" => {
+            // Excused: N not matching the sign of Dn (these vectors leave N
+            // alone when not trapping), and traps on a negative Dn (whose
+            // timing these vectors get wrong half the time).
+            let dn = regs[usize::from((op >> 9) & 7)] as u16 as i16;
+            let n_disagrees = (test.expected.sr & 8 != 0) != (dn < 0);
+            (n_disagrees || dn < 0).then_some("CHK flags/timing")
+        }
+        "LINK" if op == 0x4E57 => Some("LINK A7"),
+        "DIVU" | "DIVS" => {
+            let dn = usize::from((op >> 9) & 7);
+            let overflowed = test.expected.sr & 2 != 0 && test.expected.regs[dn] == regs[dn];
+            let by_zero = test.transactions.iter().any(|t| t.starts_with("r.w 20 = "));
+            (overflowed || by_zero).then_some("division overflow / by zero")
+        }
+        "ASL.b" => {
+            let dn = usize::from(op & 7);
+            ((test.expected.regs[dn] ^ regs[dn]) & !0xFF != 0).then_some("corrupt vector")
+        }
+        _ => None,
+    }
 }
 
 #[test]
