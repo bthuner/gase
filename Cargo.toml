@@ -16,6 +16,7 @@ gase-savestate = { path = "crates/savestate" }
 gase-m68k = { path = "crates/m68k" }
 gase-z80 = { path = "crates/z80" }
 gase-sound = { path = "crates/sound" }
+gase-vdp = { path = "crates/vdp" }
 gase-core = { path = "crates/core" }
 
 [workspace.lints.rust]

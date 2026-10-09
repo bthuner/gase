@@ -29,6 +29,7 @@ dependencies = [
  "gase-m68k",
  "gase-savestate",
  "gase-sound",
+ "gase-vdp",
  "gase-z80",
 ]
 
@@ -45,6 +46,13 @@ version = "0.1.0"
 
 [[package]]
 name = "gase-sound"
+version = "0.1.0"
+dependencies = [
+ "gase-savestate",
+]
+
+[[package]]
+name = "gase-vdp"
 version = "0.1.0"
 dependencies = [
  "gase-savestate",
