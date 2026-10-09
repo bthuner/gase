@@ -256,7 +256,7 @@ pub fn run(options: &Options) -> Result<(), String> {
     let mut samples = Vec::with_capacity(4096);
     let frame_time = Duration::from_secs_f64(1.0 / frame_rate);
     let mut next_deadline = Instant::now();
-    let mut last_sram_flush = Instant::now();
+    let mut last_save_flush = Instant::now();
     let mut shown_title = String::new();
 
     'main: loop {
@@ -465,9 +465,9 @@ pub fn run(options: &Options) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
             shown_title = status;
         }
-        if last_sram_flush.elapsed() > Duration::from_secs(5) {
-            fe.session.flush_sram();
-            last_sram_flush = Instant::now();
+        if last_save_flush.elapsed() > Duration::from_secs(5) {
+            fe.session.flush_save();
+            last_save_flush = Instant::now();
         }
     }
     Ok(())

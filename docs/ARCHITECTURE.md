@@ -7,7 +7,7 @@ points to the module whose documentation goes deeper.
 
 ```text
                       ┌───────────── gase (frontend) ─────────────┐
-   keyboard/pads ───► │ Session: ROM, SRAM, save states, rewind   │ ───► window, speakers
+   keyboard/pads ───► │ Session: ROM, .srm saves, states, rewind  │ ───► window, speakers
                       └──────────────────┬────────────────────────┘
                                          │ run_frame(), frame(), drain_audio()
                       ┌──────────────────▼──────────────── gase-core ┐
@@ -15,7 +15,7 @@ points to the module whose documentation goes deeper.
                       │   ├─ M68k (gase-m68k)  ──┐                     │
                       │   ├─ Z80  (gase-z80)   ──┤ Bus traits          │
                       │   └─ Hardware ◄──────────┘                     │
-                      │        ├─ Cartridge (ROM, SRAM, mapper)        │
+                      │        ├─ Cartridge (ROM, SRAM/EEPROM, mapper) │
                       │        ├─ 64 KiB RAM, 8 KiB Z80 RAM            │
                       │        ├─ Vdp (gase-vdp)                        │
                       │        ├─ Ym2612, Psg (gase-sound)              │
@@ -113,7 +113,21 @@ binary with a magic number, a version and a fingerprint of the game. Rewind
 every few frames. Loading is transactional: a damaged state leaves the
 console untouched.
 
-## 7. Correctness
+## 7. Cartridge saves
+
+Games keep progress in one of two kinds of chip. Most have **battery-backed
+SRAM**, ordinary memory mapped at `0x200000` (`crates/core/src/cartridge.rs`).
+A few dozen use a **serial EEPROM**: a tiny I²C chip with only a clock and
+a data pin, which the game drives bit by bit by writing to a latch at a
+board-specific address. `crates/core/src/eeprom.rs` explains the protocol
+(START/STOP, ACK, device and word addresses, page writes) and emulates the
+chip edge by edge; `crates/core/src/eeprom/boards.rs` lists which games use
+which chip and wiring, since nothing in the ROM says so.
+
+Frontends do not care which kind it is: `Cartridge::save_data()` and
+`take_save_dirty()` give them bytes to store in the `.srm` file.
+
+## 8. Correctness
 
 * The CPU cores are checked against the TomHarte / SingleStepTests suites:
   hundreds of thousands of single-instruction tests each, comparing every
