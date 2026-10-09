@@ -1,0 +1,35 @@
+//! Save-state support: every field that influences future execution,
+//! including the hidden ones (WZ, Q, the EI delay, the pending NMI).
+
+use crate::Z80;
+
+gase_savestate::impl_state!(Z80 {
+    a,
+    f,
+    b,
+    c,
+    d,
+    e,
+    h,
+    l,
+    af_alt,
+    bc_alt,
+    de_alt,
+    hl_alt,
+    ix,
+    iy,
+    sp,
+    pc,
+    i,
+    r,
+    iff1,
+    iff2,
+    im,
+    wz,
+    q,
+    ei_delay,
+    ld_a_ir,
+    halted,
+    irq_line,
+    nmi_pending,
+});
