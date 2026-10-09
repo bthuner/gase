@@ -69,7 +69,15 @@ impl Reader<'_> {
             ram.push((addr, high));
             ram.push((addr | 1, low));
         }
-        CpuState { regs, usp, ssp, sr, pc: next_fetch.wrapping_sub(4), prefetch, ram }
+        CpuState {
+            regs,
+            usp,
+            ssp,
+            sr,
+            pc: next_fetch.wrapping_sub(4),
+            prefetch,
+            ram,
+        }
     }
 
     fn test(&mut self) -> Test {
@@ -91,18 +99,28 @@ impl Reader<'_> {
                 transactions.push(format!("n{length}"));
                 continue;
             }
-            let (_fc, addr, data, uds, lds) = (self.u32(), self.u32(), self.u32(), self.u32(), self.u32());
+            let (_fc, addr, data, uds, lds) =
+                (self.u32(), self.u32(), self.u32(), self.u32(), self.u32());
             let kind = ["", "w", "r", "t", "r-fault", "w-fault"][kind as usize];
             let size = if uds + lds == 2 { ".w" } else { ".b" };
             transactions.push(format!("{kind}{size} {addr} = {data}"));
         }
-        Test { name, initial, expected, cycles, transactions }
+        Test {
+            name,
+            initial,
+            expected,
+            cycles,
+            transactions,
+        }
     }
 }
 
 fn load(path: &Path) -> Vec<Test> {
     let bytes = std::fs::read(path).expect("read test file");
-    let mut r = Reader { bytes: &bytes, pos: 0 };
+    let mut r = Reader {
+        bytes: &bytes,
+        pos: 0,
+    };
     assert_eq!(r.u32(), 0x1A3F_5D71, "not a SingleStepTests file");
     let count = r.u32();
     (0..count).map(|_| r.test()).collect()
@@ -120,5 +138,12 @@ fn known_bad(file: &str, test: &Test) -> Option<&'static str> {
 #[ignore = "needs downloaded vectors: scripts/fetch-m68k-tests.sh"]
 fn mame_68000() {
     let dir = common::vector_dir("GASE_M68K_MAME_TESTS", "m68000-mame");
-    common::run_suite("MAME 68000", &dir, ".json.bin", load, known_bad, KNOWN_BAD_NOTES);
+    common::run_suite(
+        "MAME 68000",
+        &dir,
+        ".json.bin",
+        load,
+        known_bad,
+        KNOWN_BAD_NOTES,
+    );
 }

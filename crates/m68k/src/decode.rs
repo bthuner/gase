@@ -248,7 +248,11 @@ fn ea_in(op: u16, allowed: u16) -> Option<Ea> {
 /// Byte operations cannot use `An` directly (address registers have no
 /// byte half).
 fn ea_sized(op: u16, size: Size, allowed: u16) -> Option<Ea> {
-    let allowed = if size == Size::Byte { allowed & class::DATA } else { allowed };
+    let allowed = if size == Size::Byte {
+        allowed & class::DATA
+    } else {
+        allowed
+    };
     ea_in(op, allowed)
 }
 
@@ -282,7 +286,11 @@ fn line_0(op: u16) -> Option<Instr> {
         let reg = Ea::data(reg_hi(op));
         if (op >> 3) & 7 == 1 {
             // MOVEP: bit 7 = direction (1 = register to memory), bit 6 = long.
-            let size = if op & 0x40 != 0 { Size::Long } else { Size::Word };
+            let size = if op & 0x40 != 0 {
+                Size::Long
+            } else {
+                Size::Word
+            };
             let mem = Ea::new(Mode::Disp, reg_lo(op));
             return Some(if op & 0x80 != 0 {
                 Instr::new(Op::Movep, size, reg, mem)
@@ -292,7 +300,11 @@ fn line_0(op: u16) -> Option<Instr> {
         }
         let (bit_op, allowed) = bit_op(op);
         // BTST Dn,#imm is allowed: testing a bit of a constant.
-        let allowed = if bit_op == Op::Btst { allowed | (1 << Mode::Immediate as u16) } else { allowed };
+        let allowed = if bit_op == Op::Btst {
+            allowed | (1 << Mode::Immediate as u16)
+        } else {
+            allowed
+        };
         let dst = ea_in(op, allowed)?;
         return Some(Instr::new(bit_op, bit_size(dst), reg, dst));
     }
@@ -300,12 +312,54 @@ fn line_0(op: u16) -> Option<Instr> {
     // Immediate to CCR/SR: the EA field is "#imm" (111 100) in an
     // otherwise-unusable slot.
     match op {
-        0x003C => return Some(Instr::new(Op::OriToCcr, Size::Byte, Ea::new(Mode::Immediate, 4), Ea::NONE)),
-        0x007C => return Some(Instr::new(Op::OriToSr, Size::Word, Ea::new(Mode::Immediate, 4), Ea::NONE)),
-        0x023C => return Some(Instr::new(Op::AndiToCcr, Size::Byte, Ea::new(Mode::Immediate, 4), Ea::NONE)),
-        0x027C => return Some(Instr::new(Op::AndiToSr, Size::Word, Ea::new(Mode::Immediate, 4), Ea::NONE)),
-        0x0A3C => return Some(Instr::new(Op::EoriToCcr, Size::Byte, Ea::new(Mode::Immediate, 4), Ea::NONE)),
-        0x0A7C => return Some(Instr::new(Op::EoriToSr, Size::Word, Ea::new(Mode::Immediate, 4), Ea::NONE)),
+        0x003C => {
+            return Some(Instr::new(
+                Op::OriToCcr,
+                Size::Byte,
+                Ea::new(Mode::Immediate, 4),
+                Ea::NONE,
+            ));
+        }
+        0x007C => {
+            return Some(Instr::new(
+                Op::OriToSr,
+                Size::Word,
+                Ea::new(Mode::Immediate, 4),
+                Ea::NONE,
+            ));
+        }
+        0x023C => {
+            return Some(Instr::new(
+                Op::AndiToCcr,
+                Size::Byte,
+                Ea::new(Mode::Immediate, 4),
+                Ea::NONE,
+            ));
+        }
+        0x027C => {
+            return Some(Instr::new(
+                Op::AndiToSr,
+                Size::Word,
+                Ea::new(Mode::Immediate, 4),
+                Ea::NONE,
+            ));
+        }
+        0x0A3C => {
+            return Some(Instr::new(
+                Op::EoriToCcr,
+                Size::Byte,
+                Ea::new(Mode::Immediate, 4),
+                Ea::NONE,
+            ));
+        }
+        0x0A7C => {
+            return Some(Instr::new(
+                Op::EoriToSr,
+                Size::Word,
+                Ea::new(Mode::Immediate, 4),
+                Ea::NONE,
+            ));
+        }
         _ => {}
     }
 
@@ -315,7 +369,12 @@ fn line_0(op: u16) -> Option<Instr> {
         // Static bit operations: bit number in an extension word.
         let (bit_op, allowed) = bit_op(op);
         let dst = ea_in(op, allowed)?;
-        return Some(Instr::new(bit_op, bit_size(dst), Ea::new(Mode::Immediate, 4), dst));
+        return Some(Instr::new(
+            bit_op,
+            bit_size(dst),
+            Ea::new(Mode::Immediate, 4),
+            dst,
+        ));
     }
     let size = size_76(op)?;
     let operation = match kind {
@@ -345,7 +404,11 @@ fn bit_op(op: u16) -> (Op, u16) {
 /// Bit operations work on all 32 bits of a data register, but on a single
 /// byte in memory.
 fn bit_size(dst: Ea) -> Size {
-    if dst.mode == Mode::DataReg { Size::Long } else { Size::Byte }
+    if dst.mode == Mode::DataReg {
+        Size::Long
+    } else {
+        Size::Byte
+    }
 }
 
 /// Lines 1–3: MOVE and MOVEA. The destination field is encoded with
@@ -379,8 +442,18 @@ fn line_4(op: u16) -> Option<Instr> {
         // 0100 rrr1 x1 ea: LEA (111) and CHK.W (110).
         let reg = reg_hi(op);
         return match (op >> 6) & 7 {
-            7 => Some(Instr::new(Op::Lea, Size::Long, ea_in(op, class::CONTROL)?, Ea::addr(reg))),
-            6 => Some(Instr::new(Op::Chk, Size::Word, ea_in(op, class::DATA)?, Ea::data(reg))),
+            7 => Some(Instr::new(
+                Op::Lea,
+                Size::Long,
+                ea_in(op, class::CONTROL)?,
+                Ea::addr(reg),
+            )),
+            6 => Some(Instr::new(
+                Op::Chk,
+                Size::Word,
+                ea_in(op, class::DATA)?,
+                Ea::data(reg),
+            )),
             _ => None,
         };
     }
@@ -398,18 +471,43 @@ fn line_4(op: u16) -> Option<Instr> {
             match size_76(op) {
                 Some(size) => Some(Instr::unary(unary, size, ea_in(op, class::DATA_ALTERABLE)?)),
                 None => match unary {
-                    Op::Negx => Some(Instr::unary(Op::MoveFromSr, Size::Word, ea_in(op, class::DATA_ALTERABLE)?)),
-                    Op::Neg => Some(Instr::new(Op::MoveToCcr, Size::Word, ea_in(op, class::DATA)?, Ea::NONE)),
-                    Op::Not => Some(Instr::new(Op::MoveToSr, Size::Word, ea_in(op, class::DATA)?, Ea::NONE)),
+                    Op::Negx => Some(Instr::unary(
+                        Op::MoveFromSr,
+                        Size::Word,
+                        ea_in(op, class::DATA_ALTERABLE)?,
+                    )),
+                    Op::Neg => Some(Instr::new(
+                        Op::MoveToCcr,
+                        Size::Word,
+                        ea_in(op, class::DATA)?,
+                        Ea::NONE,
+                    )),
+                    Op::Not => Some(Instr::new(
+                        Op::MoveToSr,
+                        Size::Word,
+                        ea_in(op, class::DATA)?,
+                        Ea::NONE,
+                    )),
                     // MOVE from CCR only exists from the 68010 on.
                     _ => None,
                 },
             }
         }
         0x8 => match (op >> 6) & 3 {
-            0 => Some(Instr::unary(Op::Nbcd, Size::Byte, ea_in(op, class::DATA_ALTERABLE)?)),
-            1 if (op >> 3) & 7 == 0 => Some(Instr::unary(Op::Swap, Size::Long, Ea::data(reg_lo(op)))),
-            1 => Some(Instr::new(Op::Pea, Size::Long, ea_in(op, class::CONTROL)?, Ea::NONE)),
+            0 => Some(Instr::unary(
+                Op::Nbcd,
+                Size::Byte,
+                ea_in(op, class::DATA_ALTERABLE)?,
+            )),
+            1 if (op >> 3) & 7 == 0 => {
+                Some(Instr::unary(Op::Swap, Size::Long, Ea::data(reg_lo(op))))
+            }
+            1 => Some(Instr::new(
+                Op::Pea,
+                Size::Long,
+                ea_in(op, class::CONTROL)?,
+                Ea::NONE,
+            )),
             sz if (op >> 3) & 7 == 0 => {
                 let size = if sz == 2 { Size::Word } else { Size::Long };
                 Some(Instr::unary(Op::Ext, size, Ea::data(reg_lo(op))))
@@ -417,20 +515,42 @@ fn line_4(op: u16) -> Option<Instr> {
             sz => {
                 let size = if sz == 2 { Size::Word } else { Size::Long };
                 let allowed = class::CONTROL_ALTERABLE | (1 << Mode::PreDec as u16);
-                Some(Instr::new(Op::MovemToMem, size, Ea::NONE, ea_in(op, allowed)?))
+                Some(Instr::new(
+                    Op::MovemToMem,
+                    size,
+                    Ea::NONE,
+                    ea_in(op, allowed)?,
+                ))
             }
         },
         0xA => match size_76(op) {
-            Some(size) => Some(Instr::unary(Op::Tst, size, ea_in(op, class::DATA_ALTERABLE)?)),
-            None => Some(Instr::unary(Op::Tas, Size::Byte, ea_in(op, class::DATA_ALTERABLE)?)),
+            Some(size) => Some(Instr::unary(
+                Op::Tst,
+                size,
+                ea_in(op, class::DATA_ALTERABLE)?,
+            )),
+            None => Some(Instr::unary(
+                Op::Tas,
+                Size::Byte,
+                ea_in(op, class::DATA_ALTERABLE)?,
+            )),
         },
         0xC => {
             if op & 0x80 == 0 {
                 return None; // MULx.L/DIVx.L are 68020+
             }
-            let size = if op & 0x40 != 0 { Size::Long } else { Size::Word };
+            let size = if op & 0x40 != 0 {
+                Size::Long
+            } else {
+                Size::Word
+            };
             let allowed = class::CONTROL | (1 << Mode::PostInc as u16);
-            Some(Instr::new(Op::MovemToReg, size, ea_in(op, allowed)?, Ea::NONE))
+            Some(Instr::new(
+                Op::MovemToReg,
+                size,
+                ea_in(op, allowed)?,
+                Ea::NONE,
+            ))
         }
         0xE => match (op >> 4) & 0xF {
             0x4 => Some(Instr::bare(Op::Trap)),
@@ -438,8 +558,18 @@ fn line_4(op: u16) -> Option<Instr> {
             0x5 => Some(Instr::unary(Op::Unlk, Size::Long, reg)),
             0x6 if op & 8 == 0 => Some(Instr::unary(Op::MoveToUsp, Size::Long, reg)),
             0x6 => Some(Instr::unary(Op::MoveFromUsp, Size::Long, reg)),
-            0x8..=0xB => Some(Instr::new(Op::Jsr, Size::Long, ea_in(op, class::CONTROL)?, Ea::NONE)),
-            0xC..=0xF => Some(Instr::new(Op::Jmp, Size::Long, ea_in(op, class::CONTROL)?, Ea::NONE)),
+            0x8..=0xB => Some(Instr::new(
+                Op::Jsr,
+                Size::Long,
+                ea_in(op, class::CONTROL)?,
+                Ea::NONE,
+            )),
+            0xC..=0xF => Some(Instr::new(
+                Op::Jmp,
+                Size::Long,
+                ea_in(op, class::CONTROL)?,
+                Ea::NONE,
+            )),
             _ => None,
         },
         _ => None,
@@ -453,7 +583,11 @@ fn line_5(op: u16) -> Option<Instr> {
         if (op >> 3) & 7 == 1 {
             return Some(Instr::unary(Op::Dbcc, Size::Word, Ea::data(reg_lo(op))));
         }
-        return Some(Instr::unary(Op::Scc, Size::Byte, ea_in(op, class::DATA_ALTERABLE)?));
+        return Some(Instr::unary(
+            Op::Scc,
+            Size::Byte,
+            ea_in(op, class::DATA_ALTERABLE)?,
+        ));
     };
     // The quick value 1..8 is encoded with 8 as 0.
     let data = match reg_hi(op) {
@@ -473,20 +607,39 @@ fn line_5(op: u16) -> Option<Instr> {
 
 /// Line 6: branches. The condition and displacement are read by the handler.
 fn line_6(op: u16) -> Option<Instr> {
-    Some(Instr::bare(if (op >> 8) & 0xF == 1 { Op::Bsr } else { Op::Bcc }))
+    Some(Instr::bare(if (op >> 8) & 0xF == 1 {
+        Op::Bsr
+    } else {
+        Op::Bcc
+    }))
 }
 
 /// Line 7: MOVEQ (bit 8 must be clear).
 fn line_7(op: u16) -> Option<Instr> {
-    (op & 0x100 == 0).then_some(Instr::new(Op::Moveq, Size::Long, Ea::quick(op as u8), Ea::data(reg_hi(op))))
+    (op & 0x100 == 0).then_some(Instr::new(
+        Op::Moveq,
+        Size::Long,
+        Ea::quick(op as u8),
+        Ea::data(reg_hi(op)),
+    ))
 }
 
 /// Line 8: OR, DIVU/DIVS, SBCD.
 fn line_8(op: u16) -> Option<Instr> {
     let reg = Ea::data(reg_hi(op));
     match (op >> 6) & 7 {
-        3 => Some(Instr::new(Op::Divu, Size::Word, ea_in(op, class::DATA)?, reg)),
-        7 => Some(Instr::new(Op::Divs, Size::Word, ea_in(op, class::DATA)?, reg)),
+        3 => Some(Instr::new(
+            Op::Divu,
+            Size::Word,
+            ea_in(op, class::DATA)?,
+            reg,
+        )),
+        7 => Some(Instr::new(
+            Op::Divs,
+            Size::Word,
+            ea_in(op, class::DATA)?,
+            reg,
+        )),
         4 if (op >> 4) & 3 == 0 => Some(bcd_pair(op, Op::Sbcd)),
         _ => logic_pair(op, Op::Or),
     }
@@ -494,8 +647,17 @@ fn line_8(op: u16) -> Option<Instr> {
 
 /// `ABCD`/`SBCD`/`ADDX`/`SUBX` operands: `Dy,Dx` or `-(Ay),-(Ax)` (bit 3).
 fn register_pair(op: u16, operation: Op, size: Size) -> Instr {
-    let mode = if op & 8 != 0 { Mode::PreDec } else { Mode::DataReg };
-    Instr::new(operation, size, Ea::new(mode, reg_lo(op)), Ea::new(mode, reg_hi(op)))
+    let mode = if op & 8 != 0 {
+        Mode::PreDec
+    } else {
+        Mode::DataReg
+    };
+    Instr::new(
+        operation,
+        size,
+        Ea::new(mode, reg_lo(op)),
+        Ea::new(mode, reg_hi(op)),
+    )
 }
 
 fn bcd_pair(op: u16, operation: Op) -> Instr {
@@ -509,7 +671,12 @@ fn logic_pair(op: u16, operation: Op) -> Option<Instr> {
     if op & 0x100 == 0 {
         Some(Instr::new(operation, size, ea_in(op, class::DATA)?, reg))
     } else {
-        Some(Instr::new(operation, size, reg, ea_in(op, class::MEMORY_ALTERABLE)?))
+        Some(Instr::new(
+            operation,
+            size,
+            reg,
+            ea_in(op, class::MEMORY_ALTERABLE)?,
+        ))
     }
 }
 
@@ -518,16 +685,35 @@ fn line_add_sub(op: u16, plain: Op, address: Op, extended: Op) -> Option<Instr> 
     let reg = reg_hi(op);
     let Some(size) = size_76(op) else {
         // Opmode x11: the address-register form, bit 8 selects the size.
-        let size = if op & 0x100 != 0 { Size::Long } else { Size::Word };
-        return Some(Instr::new(address, size, ea_in(op, class::ALL)?, Ea::addr(reg)));
+        let size = if op & 0x100 != 0 {
+            Size::Long
+        } else {
+            Size::Word
+        };
+        return Some(Instr::new(
+            address,
+            size,
+            ea_in(op, class::ALL)?,
+            Ea::addr(reg),
+        ));
     };
     if op & 0x100 == 0 {
-        Some(Instr::new(plain, size, ea_sized(op, size, class::ALL)?, Ea::data(reg)))
+        Some(Instr::new(
+            plain,
+            size,
+            ea_sized(op, size, class::ALL)?,
+            Ea::data(reg),
+        ))
     } else if (op >> 4) & 3 == 0 {
         // Register modes are useless as a memory destination: ADDX/SUBX.
         Some(register_pair(op, extended, size))
     } else {
-        Some(Instr::new(plain, size, Ea::data(reg), ea_in(op, class::MEMORY_ALTERABLE)?))
+        Some(Instr::new(
+            plain,
+            size,
+            Ea::data(reg),
+            ea_in(op, class::MEMORY_ALTERABLE)?,
+        ))
     }
 }
 
@@ -535,16 +721,35 @@ fn line_add_sub(op: u16, plain: Op, address: Op, extended: Op) -> Option<Instr> 
 fn line_b(op: u16) -> Option<Instr> {
     let reg = reg_hi(op);
     let Some(size) = size_76(op) else {
-        let size = if op & 0x100 != 0 { Size::Long } else { Size::Word };
-        return Some(Instr::new(Op::Cmpa, size, ea_in(op, class::ALL)?, Ea::addr(reg)));
+        let size = if op & 0x100 != 0 {
+            Size::Long
+        } else {
+            Size::Word
+        };
+        return Some(Instr::new(
+            Op::Cmpa,
+            size,
+            ea_in(op, class::ALL)?,
+            Ea::addr(reg),
+        ));
     };
     if op & 0x100 == 0 {
-        Some(Instr::new(Op::Cmp, size, ea_sized(op, size, class::ALL)?, Ea::data(reg)))
+        Some(Instr::new(
+            Op::Cmp,
+            size,
+            ea_sized(op, size, class::ALL)?,
+            Ea::data(reg),
+        ))
     } else if (op >> 3) & 7 == 1 {
         let src = Ea::new(Mode::PostInc, reg_lo(op));
         Some(Instr::new(Op::Cmpm, size, src, Ea::new(Mode::PostInc, reg)))
     } else {
-        Some(Instr::new(Op::Eor, size, Ea::data(reg), ea_in(op, class::DATA_ALTERABLE)?))
+        Some(Instr::new(
+            Op::Eor,
+            size,
+            Ea::data(reg),
+            ea_in(op, class::DATA_ALTERABLE)?,
+        ))
     }
 }
 
@@ -557,8 +762,18 @@ fn line_c(op: u16) -> Option<Instr> {
         _ => {}
     }
     match (op >> 6) & 7 {
-        3 => Some(Instr::new(Op::Mulu, Size::Word, ea_in(op, class::DATA)?, reg)),
-        7 => Some(Instr::new(Op::Muls, Size::Word, ea_in(op, class::DATA)?, reg)),
+        3 => Some(Instr::new(
+            Op::Mulu,
+            Size::Word,
+            ea_in(op, class::DATA)?,
+            reg,
+        )),
+        7 => Some(Instr::new(
+            Op::Muls,
+            Size::Word,
+            ea_in(op, class::DATA)?,
+            reg,
+        )),
         4 if (op >> 4) & 3 == 0 => Some(bcd_pair(op, Op::Abcd)),
         _ => logic_pair(op, Op::And),
     }
@@ -573,7 +788,11 @@ fn line_e(op: u16) -> Option<Instr> {
             return None; // bit-field instructions are 68020+
         }
         let kind = ShiftKind::new(op >> 9, left);
-        return Some(Instr::unary(Op::ShiftMem(kind), Size::Word, ea_in(op, class::MEMORY_ALTERABLE)?));
+        return Some(Instr::unary(
+            Op::ShiftMem(kind),
+            Size::Word,
+            ea_in(op, class::MEMORY_ALTERABLE)?,
+        ));
     };
     let kind = ShiftKind::new(op >> 3, left);
     // Bit 5: count in a data register, or an immediate 1..8 (0 means 8).
@@ -585,7 +804,12 @@ fn line_e(op: u16) -> Option<Instr> {
             n => n,
         })
     };
-    Some(Instr::new(Op::Shift(kind), size, count, Ea::data(reg_lo(op))))
+    Some(Instr::new(
+        Op::Shift(kind),
+        size,
+        count,
+        Ea::data(reg_lo(op)),
+    ))
 }
 
 #[cfg(test)]
@@ -597,7 +821,10 @@ mod tests {
         assert_eq!(decode(0x4E71).op, Op::Nop);
         assert_eq!(decode(0x4AFC).op, Op::Illegal);
         let add = decode(0xD041); // ADD.W D1,D0
-        assert_eq!((add.op, add.size, add.src, add.dst), (Op::Add, Size::Word, Ea::data(1), Ea::data(0)));
+        assert_eq!(
+            (add.op, add.size, add.src, add.dst),
+            (Op::Add, Size::Word, Ea::data(1), Ea::data(0))
+        );
         assert_eq!(decode(0xD388).op, Op::Addx); // ADDX.L -(A0),-(A1)
         assert_eq!(decode(0xC340).op, Op::Exg); // EXG D1,D0
         assert_eq!(decode(0x2040).op, Op::Movea); // MOVEA.L D0,A0

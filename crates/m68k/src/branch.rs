@@ -31,7 +31,11 @@ impl M68k {
     #[inline]
     fn branch_target(&self) -> u32 {
         let disp8 = self.ird as u8;
-        let disp = if disp8 == 0 { self.irc as i16 as u32 } else { disp8 as i8 as u32 };
+        let disp = if disp8 == 0 {
+            self.irc as i16 as u32
+        } else {
+            disp8 as i8 as u32
+        };
         self.pc.wrapping_add(disp)
     }
 
@@ -54,7 +58,11 @@ impl M68k {
     pub(crate) fn op_bsr<B: Bus>(&mut self, bus: &mut B) -> Exec {
         self.idle(2);
         let target = self.branch_target();
-        let return_pc = if self.ird as u8 == 0 { self.pc.wrapping_add(2) } else { self.pc };
+        let return_pc = if self.ird as u8 == 0 {
+            self.pc.wrapping_add(2)
+        } else {
+            self.pc
+        };
         self.push_long(bus, return_pc)?;
         // BSR has already loaded the target into its PC when the fetch
         // faults, so that is what an address error stacks.

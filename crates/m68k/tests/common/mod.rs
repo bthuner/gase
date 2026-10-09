@@ -51,7 +51,12 @@ pub struct TestBus {
 
 impl TestBus {
     pub fn new() -> Self {
-        Self { ram: vec![0; 1 << 24], touched: Vec::new(), log: Vec::new(), logging: false }
+        Self {
+            ram: vec![0; 1 << 24],
+            touched: Vec::new(),
+            log: Vec::new(),
+            logging: false,
+        }
     }
     fn poke(&mut self, addr: u32, value: u8) {
         self.ram[addr as usize] = value;
@@ -75,7 +80,10 @@ impl Bus for TestBus {
         v
     }
     fn read_word(&mut self, addr: u32) -> u16 {
-        let v = u16::from_be_bytes([self.ram[addr as usize], self.ram[(addr as usize + 1) & 0xFF_FFFF]]);
+        let v = u16::from_be_bytes([
+            self.ram[addr as usize],
+            self.ram[(addr as usize + 1) & 0xFF_FFFF],
+        ]);
         if self.logging {
             self.log.push(format!("r.w {addr} = {v}"));
         }
@@ -110,7 +118,9 @@ fn setup(cpu: &mut M68k, bus: &mut TestBus, state: &CpuState) {
     }
 }
 
-const REG_NAMES: [&str; 15] = ["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "a6"];
+const REG_NAMES: [&str; 15] = [
+    "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "a6",
+];
 
 /// Describe every difference between the CPU/memory and `state`.
 fn compare(cpu: &M68k, bus: &TestBus, state: &CpuState) -> String {
@@ -154,8 +164,17 @@ pub struct FileResult {
 /// Why a test's expected result is not trusted, if it is not.
 pub type KnownBad = fn(file: &str, test: &Test) -> Option<&'static str>;
 
-pub fn run_tests(file: &str, tests: &[Test], known_bad: KnownBad, cpu: &mut M68k, bus: &mut TestBus) -> FileResult {
-    let verbose: usize = std::env::var("GASE_M68K_VERBOSE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+pub fn run_tests(
+    file: &str,
+    tests: &[Test],
+    known_bad: KnownBad,
+    cpu: &mut M68k,
+    bus: &mut TestBus,
+) -> FileResult {
+    let verbose: usize = std::env::var("GASE_M68K_VERBOSE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut result = FileResult::default();
     let mut shown = 0;
     for test in tests {
@@ -180,7 +199,10 @@ pub fn run_tests(file: &str, tests: &[Test], known_bad: KnownBad, cpu: &mut M68k
         }
         if shown < verbose {
             shown += 1;
-            println!("  FAIL {}: cycles {cycles} (want {}){errors}", test.name, test.cycles);
+            println!(
+                "  FAIL {}: cycles {cycles} (want {}){errors}",
+                test.name, test.cycles
+            );
             println!("    ours:   {}", bus.log.join(", "));
             println!("    theirs: {}", test.transactions.join(", "));
         }
@@ -199,13 +221,22 @@ pub fn run_suite(
 ) {
     let filter = std::env::var("GASE_M68K_FILTER").unwrap_or_default();
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .unwrap_or_else(|_| panic!("no test vectors in {}; run scripts/fetch-m68k-tests.sh", dir.display()))
+        .unwrap_or_else(|_| {
+            panic!(
+                "no test vectors in {}; run scripts/fetch-m68k-tests.sh",
+                dir.display()
+            )
+        })
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.to_string_lossy().ends_with(extension))
         .filter(|p| p.file_name().unwrap().to_string_lossy().contains(&filter))
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "no *{extension} files in {}", dir.display());
+    assert!(
+        !files.is_empty(),
+        "no *{extension} files in {}",
+        dir.display()
+    );
 
     let mut cpu = M68k::new();
     let mut bus = TestBus::new();
@@ -223,7 +254,11 @@ pub fn run_suite(
             r.total,
         );
         if bad > 0 {
-            let _ = write!(line, "  FAILED: {} state, {} cycles only", r.state_failures, r.cycle_failures);
+            let _ = write!(
+                line,
+                "  FAILED: {} state, {} cycles only",
+                r.state_failures, r.cycle_failures
+            );
         }
         if r.excused > 0 {
             let _ = write!(line, "  ({} known-bad vectors excused)", r.excused);
@@ -248,6 +283,12 @@ pub fn run_suite(
 
 /// Directory from an environment variable, or a default under `target/`.
 pub fn vector_dir(var: &str, default: &str) -> PathBuf {
-    std::env::var_os(var)
-        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-vectors").join(default), PathBuf::from)
+    std::env::var_os(var).map_or_else(
+        || {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/test-vectors")
+                .join(default)
+        },
+        PathBuf::from,
+    )
 }

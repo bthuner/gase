@@ -88,7 +88,11 @@ impl M68k {
                 // (The microcode's PC runs ahead differently for a MOVE
                 // destination than for a source; see `fault_pc_bias`.)
                 self.fault_pc_bias = if let Operand::Mem(_) | Operand::PostInc(..) = dst {
-                    if matches!(i.dst.mode, Mode::Indirect | Mode::PostInc) { 2 } else { 0 }
+                    if matches!(i.dst.mode, Mode::Indirect | Mode::PostInc) {
+                        2
+                    } else {
+                        0
+                    }
                 } else {
                     0
                 };

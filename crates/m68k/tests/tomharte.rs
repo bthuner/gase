@@ -33,7 +33,7 @@ enum Json {
     String(String),
     Array(Vec<Json>),
     Object(Vec<(String, Json)>),
-    Bool(bool),
+    Bool,
     Null,
 }
 
@@ -41,7 +41,11 @@ impl Json {
     fn get(&self, key: &str) -> &Json {
         match self {
             Json::Object(fields) => {
-                &fields.iter().find(|(k, _)| k == key).unwrap_or_else(|| panic!("missing key {key}")).1
+                &fields
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .unwrap_or_else(|| panic!("missing key {key}"))
+                    .1
             }
             _ => panic!("not an object"),
         }
@@ -83,7 +87,11 @@ impl Parser<'_> {
 
     fn expect(&mut self, byte: u8) {
         self.skip_ws();
-        assert_eq!(self.bytes[self.pos], byte, "JSON syntax error at byte {}", self.pos);
+        assert_eq!(
+            self.bytes[self.pos], byte,
+            "JSON syntax error at byte {}",
+            self.pos
+        );
         self.pos += 1;
     }
 
@@ -130,11 +138,11 @@ impl Parser<'_> {
             b'"' => Json::String(self.string()),
             b't' => {
                 self.pos += 4;
-                Json::Bool(true)
+                Json::Bool
             }
             b'f' => {
                 self.pos += 5;
-                Json::Bool(false)
+                Json::Bool
             }
             b'n' => {
                 self.pos += 4;
@@ -183,7 +191,11 @@ fn parse_json(bytes: &[u8]) -> Json {
 fn state(json: &Json) -> CpuState {
     let mut regs = [0; 15];
     for (i, reg) in regs.iter_mut().enumerate() {
-        let name = if i < 8 { format!("d{i}") } else { format!("a{}", i - 8) };
+        let name = if i < 8 {
+            format!("d{i}")
+        } else {
+            format!("a{}", i - 8)
+        };
         *reg = json.get(&name).u32();
     }
     let prefetch = json.get("prefetch").array();
@@ -251,12 +263,30 @@ const KNOWN_BAD_NOTES: &[(&str, &str)] = &[
          at different points and charge 50 instead of 58 cycles; the microcode-derived \
          vectors define all of these",
     ),
-    ("ASR", "count > operand size on a negative value: C and X are the sign bit, not 0"),
-    ("ADD.l/SUB.l", "ADDQ.L/SUBQ.L #,An take 8 cycles (as documented), not 6"),
-    ("CHK", "N always reflects the sign of Dn, and the trap timing depends on bound - Dn"),
-    ("DIVU/DIVS", "overflow sets N and clears Z; DIVS signed overflow takes the full-length path"),
-    ("ASL.b", "two corrupt vectors where a byte shift rewrites the upper 24 bits of Dn"),
-    ("LINK", "LINK A7 pushes the value A7 had before the instruction, not the decremented one"),
+    (
+        "ASR",
+        "count > operand size on a negative value: C and X are the sign bit, not 0",
+    ),
+    (
+        "ADD.l/SUB.l",
+        "ADDQ.L/SUBQ.L #,An take 8 cycles (as documented), not 6",
+    ),
+    (
+        "CHK",
+        "N always reflects the sign of Dn, and the trap timing depends on bound - Dn",
+    ),
+    (
+        "DIVU/DIVS",
+        "overflow sets N and clears Z; DIVS signed overflow takes the full-length path",
+    ),
+    (
+        "ASL.b",
+        "two corrupt vectors where a byte shift rewrites the upper 24 bits of Dn",
+    ),
+    (
+        "LINK",
+        "LINK A7 pushes the value A7 had before the instruction, not the decremented one",
+    ),
     (
         "DIVU",
         "the only divide-by-zero vector stacks the DIVU's own address; group 2 traps stack \
@@ -311,5 +341,12 @@ fn known_bad(file: &str, test: &Test) -> Option<&'static str> {
 #[ignore = "needs downloaded vectors: scripts/fetch-m68k-tests.sh"]
 fn tom_harte_68000() {
     let dir = common::vector_dir("GASE_M68K_TESTS", "m68000");
-    common::run_suite("Tom Harte 68000", &dir, ".json", load, known_bad, KNOWN_BAD_NOTES);
+    common::run_suite(
+        "Tom Harte 68000",
+        &dir,
+        ".json",
+        load,
+        known_bad,
+        KNOWN_BAD_NOTES,
+    );
 }

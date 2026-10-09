@@ -32,9 +32,9 @@
 //! which in this core is simply the internal `pc` at the time the word is
 //! consumed (see [`M68k::prefetch`]).
 
+use crate::Bus;
 use crate::cpu::M68k;
 use crate::exceptions::Exec;
-use crate::Bus;
 
 /// The size of an operation (the `.B`, `.W`, `.L` suffix).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,12 +168,6 @@ impl Ea {
         Some(Ea { mode, reg })
     }
 
-    /// Is this a register (data or address) operand?
-    #[inline]
-    pub(crate) const fn is_register(self) -> bool {
-        matches!(self.mode, Mode::DataReg | Mode::AddrReg)
-    }
-
     /// Is this a register, an immediate or a quick constant? Long ALU
     /// operations with such a source take 2 more internal cycles than with a
     /// memory source, because the ALU is not overlapped with a memory read.
@@ -219,10 +213,8 @@ pub(crate) mod class {
     pub(crate) const MEMORY_ALTERABLE: u16 = MEMORY & ALTERABLE;
     /// Memory modes that denote an address without size: what `LEA`, `JMP`,
     /// `PEA`... accept.
-    pub(crate) const CONTROL: u16 = MEMORY
-        & !bit(Mode::PostInc)
-        & !bit(Mode::PreDec)
-        & !bit(Mode::Immediate);
+    pub(crate) const CONTROL: u16 =
+        MEMORY & !bit(Mode::PostInc) & !bit(Mode::PreDec) & !bit(Mode::Immediate);
     pub(crate) const CONTROL_ALTERABLE: u16 = CONTROL & ALTERABLE;
 }
 
@@ -244,7 +236,11 @@ impl M68k {
     /// How far `(An)+` / `-(An)` move `An` for an operand of `size`.
     #[inline]
     fn step_size(reg: u8, size: Size) -> u32 {
-        if reg == 7 && size == Size::Byte { 2 } else { size.bytes() }
+        if reg == 7 && size == Size::Byte {
+            2
+        } else {
+            size.bytes()
+        }
     }
 
     /// The PC an address error stacks is the microcode's PC register, which
@@ -280,8 +276,16 @@ impl M68k {
     #[inline]
     pub(crate) fn indexed(&self, base: u32, ext: u16) -> u32 {
         let reg = ((ext >> 12) & 7) as usize;
-        let xn = if ext & 0x8000 != 0 { self.a[reg] } else { self.d[reg] };
-        let xn = if ext & 0x0800 != 0 { xn } else { xn as u16 as i16 as u32 };
+        let xn = if ext & 0x8000 != 0 {
+            self.a[reg]
+        } else {
+            self.d[reg]
+        };
+        let xn = if ext & 0x0800 != 0 {
+            xn
+        } else {
+            xn as u16 as i16 as u32
+        };
         base.wrapping_add(ext as u8 as i8 as u32).wrapping_add(xn)
     }
 
@@ -386,7 +390,9 @@ impl M68k {
         match operand {
             Operand::Data(r) => self.set_d(r, size, value),
             Operand::Addr(r) => self.a[r as usize] = value,
-            Operand::Mem(addr) | Operand::PostInc(_, addr) => self.write_sized(bus, addr, size, value)?,
+            Operand::Mem(addr) | Operand::PostInc(_, addr) => {
+                self.write_sized(bus, addr, size, value)?
+            }
             Operand::Imm(_) => unreachable!("write to an immediate operand"),
         }
         Ok(())

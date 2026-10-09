@@ -153,8 +153,9 @@ impl M68k {
         self.nmi_pending = false;
         self.trace_pending = false;
         self.in_group0 = false;
-        let read_long =
-            |bus: &mut B, addr| u32::from(bus.read_word(addr)) << 16 | u32::from(bus.read_word(addr + 2));
+        let read_long = |bus: &mut B, addr| {
+            u32::from(bus.read_word(addr)) << 16 | u32::from(bus.read_word(addr + 2))
+        };
         self.a[7] = read_long(bus, 0);
         let pc = read_long(bus, 4);
         self.set_pc(bus, pc);
@@ -248,13 +249,21 @@ impl M68k {
     /// The user stack pointer.
     #[must_use]
     pub fn usp(&self) -> u32 {
-        if self.supervisor { self.inactive_sp } else { self.a[7] }
+        if self.supervisor {
+            self.inactive_sp
+        } else {
+            self.a[7]
+        }
     }
 
     /// The supervisor stack pointer.
     #[must_use]
     pub fn ssp(&self) -> u32 {
-        if self.supervisor { self.a[7] } else { self.inactive_sp }
+        if self.supervisor {
+            self.a[7]
+        } else {
+            self.inactive_sp
+        }
     }
 
     /// Set the user stack pointer.
@@ -339,22 +348,22 @@ impl M68k {
     #[inline]
     pub(crate) fn condition(&self, cc: u16) -> bool {
         match cc & 0xF {
-            0x0 => true,                            // T  (BRA)
-            0x1 => false,                           // F  (BSR in Bcc's slot)
-            0x2 => !self.c && !self.z,              // HI higher (unsigned)
-            0x3 => self.c || self.z,                // LS lower or same
-            0x4 => !self.c,                         // CC carry clear (HS)
-            0x5 => self.c,                          // CS carry set (LO)
-            0x6 => !self.z,                         // NE
-            0x7 => self.z,                          // EQ
-            0x8 => !self.v,                         // VC
-            0x9 => self.v,                          // VS
-            0xA => !self.n,                         // PL
-            0xB => self.n,                          // MI
-            0xC => self.n == self.v,                // GE (signed)
-            0xD => self.n != self.v,                // LT
-            0xE => !self.z && self.n == self.v,     // GT
-            _ => self.z || self.n != self.v,        // LE
+            0x0 => true,                        // T  (BRA)
+            0x1 => false,                       // F  (BSR in Bcc's slot)
+            0x2 => !self.c && !self.z,          // HI higher (unsigned)
+            0x3 => self.c || self.z,            // LS lower or same
+            0x4 => !self.c,                     // CC carry clear (HS)
+            0x5 => self.c,                      // CS carry set (LO)
+            0x6 => !self.z,                     // NE
+            0x7 => self.z,                      // EQ
+            0x8 => !self.v,                     // VC
+            0x9 => self.v,                      // VS
+            0xA => !self.n,                     // PL
+            0xB => self.n,                      // MI
+            0xC => self.n == self.v,            // GE (signed)
+            0xD => self.n != self.v,            // LT
+            0xE => !self.z && self.n == self.v, // GT
+            _ => self.z || self.n != self.v,    // LE
         }
     }
 
@@ -371,7 +380,11 @@ impl M68k {
     /// An address error for a data access at `address`.
     #[cold]
     fn odd_access(&self, address: u32, access: Access) -> Exception {
-        let access = if access == Access::Read && self.program_space { Access::ProgramRead } else { access };
+        let access = if access == Access::Read && self.program_space {
+            Access::ProgramRead
+        } else {
+            access
+        };
         Exception::AddressError(AddressFault {
             address,
             access,

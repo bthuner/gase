@@ -52,7 +52,11 @@ pub(crate) fn add(d: u32, s: u32, carry_in: bool, size: Size) -> Sum {
     let msb = size.msb();
     let carry = ((s & d) | ((s | d) & !result)) & msb != 0;
     let overflow = (s ^ result) & (d ^ result) & msb != 0;
-    Sum { result, carry, overflow }
+    Sum {
+        result,
+        carry,
+        overflow,
+    }
 }
 
 /// Subtract `d - s - borrow_in`, at the given size.
@@ -62,7 +66,11 @@ pub(crate) fn sub(d: u32, s: u32, borrow_in: bool, size: Size) -> Sum {
     let msb = size.msb();
     let carry = ((s & !d) | (result & !d) | (s & result)) & msb != 0;
     let overflow = (s ^ d) & (result ^ d) & msb != 0;
-    Sum { result, carry, overflow }
+    Sum {
+        result,
+        carry,
+        overflow,
+    }
 }
 
 impl M68k {

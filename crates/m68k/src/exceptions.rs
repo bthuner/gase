@@ -155,12 +155,20 @@ impl M68k {
         self.in_group0 = true;
         let sr = self.enter_supervisor();
         let function_code = if sr & 0x2000 != 0 { 4 } else { 0 }
-            | if matches!(fault.access, Access::Fetch | Access::ProgramRead) { 2 } else { 1 };
+            | if matches!(fault.access, Access::Fetch | Access::ProgramRead) {
+                2
+            } else {
+                1
+            };
         // The stacked instruction register is the real IR: if the faulting
         // instruction had already prefetched, that is the *next* opcode.
         let ir = self.ir;
         let status = (ir & !0x1F)
-            | if fault.access == Access::Write { 0 } else { 0x10 }
+            | if fault.access == Access::Write {
+                0
+            } else {
+                0x10
+            }
             | function_code;
         // The aborted bus cycle still takes its 4 cycles, then 8 more pass
         // before the frame is written.

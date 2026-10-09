@@ -51,7 +51,11 @@ impl M68k {
             match kind {
                 ShiftKind::Asl | ShiftKind::Lsl => {
                     let carry = count <= bits && bit(value, bits - count);
-                    let result = if count < bits { (value << count) & mask } else { 0 };
+                    let result = if count < bits {
+                        (value << count) & mask
+                    } else {
+                        0
+                    };
                     if kind == ShiftKind::Asl {
                         // V: did the top `count + 1` bits differ from each other?
                         v = if count >= bits {
@@ -68,7 +72,11 @@ impl M68k {
                 }
                 ShiftKind::Asr => {
                     let negative = value & msb != 0;
-                    let carry = if count <= bits { bit(value, count - 1) } else { negative };
+                    let carry = if count <= bits {
+                        bit(value, count - 1)
+                    } else {
+                        negative
+                    };
                     let signed = size.sign_extend(value) as i32;
                     let result = (signed >> count.min(31)) as u32 & mask;
                     self.c = carry;
@@ -84,13 +92,21 @@ impl M68k {
                 }
                 ShiftKind::Rol => {
                     let n = count % bits;
-                    let result = if n == 0 { value } else { ((value << n) | (value >> (bits - n))) & mask };
+                    let result = if n == 0 {
+                        value
+                    } else {
+                        ((value << n) | (value >> (bits - n))) & mask
+                    };
                     self.c = result & 1 != 0;
                     result
                 }
                 ShiftKind::Ror => {
                     let n = count % bits;
-                    let result = if n == 0 { value } else { ((value >> n) | (value << (bits - n))) & mask };
+                    let result = if n == 0 {
+                        value
+                    } else {
+                        ((value >> n) | (value << (bits - n))) & mask
+                    };
                     self.c = result & msb != 0;
                     result
                 }
@@ -118,7 +134,12 @@ impl M68k {
     }
 
     /// `<shift> #n,Dy` / `<shift> Dx,Dy`.
-    pub(crate) fn op_shift_register<B: Bus>(&mut self, bus: &mut B, i: Instr, kind: ShiftKind) -> Exec {
+    pub(crate) fn op_shift_register<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        i: Instr,
+        kind: ShiftKind,
+    ) -> Exec {
         let count = if i.src.mode == Mode::DataReg {
             self.d[i.src.reg as usize] % 64
         } else {
@@ -134,7 +155,12 @@ impl M68k {
     }
 
     /// `<shift> <ea>`: shift a word in memory by one bit.
-    pub(crate) fn op_shift_memory<B: Bus>(&mut self, bus: &mut B, i: Instr, kind: ShiftKind) -> Exec {
+    pub(crate) fn op_shift_memory<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        i: Instr,
+        kind: ShiftKind,
+    ) -> Exec {
         let operand = self.resolve(bus, i.dst, Size::Word);
         let value = self.read_operand(bus, operand, Size::Word)?;
         let result = self.shift(kind, value, 1, Size::Word);

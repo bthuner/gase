@@ -94,6 +94,7 @@
 //! accepted when it is greater than the mask in SR; level 7 cannot be masked.
 //! The Mega Drive uses *autovectors*: the vector number is simply 24 + level.
 
+mod arith;
 mod bcd;
 mod bit;
 mod branch;
@@ -107,7 +108,6 @@ mod logic;
 mod muldiv;
 mod shift;
 mod system;
-mod arith;
 
 pub use cpu::{M68k, RunState};
 

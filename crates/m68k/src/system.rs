@@ -87,7 +87,11 @@ impl M68k {
         // 16 bits goes through the 2-cycle slower path.
         let (difference, overflow) = bound.overflowing_sub(value);
         // (Plus the 4 internal cycles that start every exception.)
-        self.idle(if value < 0 && difference >= 0 && !overflow { 6 } else { 4 });
+        self.idle(if value < 0 && difference >= 0 && !overflow {
+            6
+        } else {
+            4
+        });
         let pc = self.pc;
         self.exception(bus, vector::CHK, pc)
     }
