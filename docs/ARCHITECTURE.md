@@ -255,11 +255,8 @@ picture, play sound, read buttons, open files, offer menus. Only the
   dependencies and no I/O, like the core.
 * A **shell** per platform does the *how*: `crates/gase/src/sdl.rs` (with
   `desktop.rs` for files) on desktop and, the same file with `mobile.rs`
-  for files, on Android and iOS (see "Mobile shells" below); a web shell
-  (JavaScript + WASM) follows the same pattern.
-  `desktop.rs` for files) on desktop; `crates/web` with the page in
-  `web/` in a browser (section 11); Android/iOS shells (SDL2) can follow
-  the same pattern.
+  for files, on Android and iOS (see "Mobile shells" below);
+  `crates/web` with the page in `web/` in a browser (section 11).
 
 The contract between them is the `Platform` trait plus three flows
 (`crates/app/src/platform.rs` documents it with a diagram):
@@ -348,6 +345,7 @@ Two rules came with the touch screen: on-screen controls hide while a
 gamepad is being used (the last input wins), and `Event::Suspend` writes
 the save and settings immediately, because a phone may kill a backgrounded
 app without warning.
+
 ## 11. The web shell
 
 `crates/web` (gase-web) is the platform contract implemented for a
