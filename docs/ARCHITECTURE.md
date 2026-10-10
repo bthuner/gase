@@ -183,6 +183,44 @@ plain pixel buffers with a public-domain 8×8 font
 the headless runner (`--dump-vram`, `--dump-cram`, `--dump-debugger`,
 `--break`).
 
+## 9. Performance
+
+At the time of writing gase runs the test ROMs at 1000-1700 frames per
+second on one core of a modest 2.1 GHz Xeon, 16-28 times real time. The
+numbers, the scripts that produce them and how to profile are in
+[`benchmarks/`](../benchmarks/README.md). The main design choices:
+
+* **Catch-up scheduling** (section 3). Nothing runs that nobody can
+  observe: the sound chips and the VDP's memory side are only brought up
+  to date when a CPU touches them or a line or frame ends.
+* **Pre-decoded CPUs.** Every 68000 opcode is decoded once into a 65 536
+  entry table, so executing an instruction is a table lookup and one
+  `match`; the effective-address helpers are inlined into each handler so
+  operands stay in registers.
+* **Fast paths for the common case, full map behind them.** A program
+  fetch from cartridge ROM is one compare and a load; the Z80's sound RAM
+  likewise. Everything else (SRAM, EEPROM, mapper, I/O) goes through the
+  full memory map, out of line.
+* **A renderer that works in tile rows, not pixels.** A plane is drawn in
+  runs of up to 8 pixels that share one name table entry and one pattern
+  row; the name table row is found once per scroll column. Priorities are
+  small numbers compared with byte arithmetic that the compiler turns into
+  SIMD instructions, 16 pixels at a time.
+* **Skip what cannot change.** A YM2612 channel whose operators have all
+  faded out after key-off only advances its oscillators; the PSG jumps
+  from one counter reload to the next instead of ticking every 16 clocks.
+
+The rule for all of these: **a readable reference, and a tested fast
+path.** The straightforward version stays in the code as the documented
+definition (`Vdp::pick`, `plane_pixel_reference`, `Psg::tick` +
+`Psg::output`, `Channel::calc_operators`, `Operator::eg_step`,
+`Cartridge::read_word_mapped`, `State::save_slice`'s default), and a unit
+test checks that the fast path gives exactly the same results, usually on
+thousands of random inputs. Read the reference to learn how the hardware
+works; read the fast path to learn how to make it quick. On top of that,
+every optimisation must leave the test-ROM frame hashes, the WAV output
+and the CPU test vectors bit-identical.
+
 ## Where to start reading
 
 1. `crates/core/src/system.rs` — the main loop.

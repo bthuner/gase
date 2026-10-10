@@ -112,6 +112,17 @@ scripts/fetch-z80-tests.sh
 cargo test -p gase-m68k -p gase-z80 --profile fast-test -- --ignored
 ```
 
+## Benchmarks
+
+```sh
+scripts/fetch-test-roms.sh
+benchmarks/run.sh            # frames per second over the test ROMs (medians)
+benchmarks/callgrind.sh      # instruction counts, for profiling
+```
+
+See [`benchmarks/README.md`](benchmarks/README.md) for how to compare
+versions and read profiles, and `benchmarks/results/` for measurements.
+
 ## Contributing
 
 Work happens on `feature/…` and `fix/…` branches, merged into `develop`
