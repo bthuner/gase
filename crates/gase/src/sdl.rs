@@ -455,8 +455,17 @@ impl DebugWindow {
     }
 }
 
-/// Copy `0xAARRGGBB` pixels into a streaming ARGB8888 texture (opaque
-/// pictures have alpha 0 in their top byte, so `force_opaque` sets it).
+/// Copy `0xAARRGGBB` pixels into the top-left corner of a streaming
+/// ARGB8888 texture (opaque pictures have alpha 0 in their top byte, so
+/// `force_opaque` sets it).
+///
+/// The whole texture is locked (`None`) even when only part of it is
+/// written: `sdl2` 0.37's `Texture::with_lock` keeps a pointer to a
+/// temporary `Rect` after the temporary is gone, so passing a rectangle
+/// makes SDL read a dead stack slot. In optimised builds that slot is
+/// reused, SDL computes a bogus pixel address and the copy below writes
+/// into freed memory. Locking everything costs nothing extra: SDL hands
+/// back the same buffer either way.
 fn upload(
     texture: &mut Texture<'_>,
     pixels: &[u32],
@@ -464,9 +473,8 @@ fn upload(
     force_opaque: bool,
 ) -> Result<(), String> {
     let mask = if force_opaque { 0xFF00_0000 } else { 0 };
-    let area = SdlRect::new(0, 0, width as u32, height as u32);
     texture
-        .with_lock(area, |buffer, pitch| {
+        .with_lock(None, |buffer, pitch| {
             for (src, dst) in pixels
                 .chunks(stride)
                 .zip(buffer.chunks_mut(pitch))

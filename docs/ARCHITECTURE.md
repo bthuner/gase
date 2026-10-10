@@ -35,6 +35,20 @@ portable to any frontend. The user interface is built the same way: a
 library without I/O (`gase-app`, section 10) that every platform's thin
 shell drives.
 
+### Loading ROMs and archives
+
+`Cartridge::from_bytes` (`crates/core/src/cartridge.rs`) is the single
+entry point for ROM bytes, so every frontend gets the same formats: plain
+images (`.bin`, `.md`, `.gen`), interleaved `.smd` dumps (deinterleaved on
+load), and either of them inside a `.zip` archive. A zip file is
+recognised by its first bytes (`PK\3\4`), the ROM inside is picked by
+its extension (the largest `.md`/`.bin`/`.gen`/`.smd`/`.68k`/`.sgd` file)
+and extracted, with its CRC-32 checked, by `crates/zip`, a dependency-free
+ZIP reader and DEFLATE decoder whose module docs explain both formats:
+LZ77 back-references, canonical Huffman codes and how a compressed block
+describes its own codes. Frontends name save files after the file they
+opened, so `game.zip` saves to `game.srm` like `game.bin` does.
+
 ## 2. The CPUs and their buses
 
 Each CPU crate defines a small `Bus` trait describing what the CPU needs
@@ -305,3 +319,4 @@ Inside the app, three ideas are worth reading about in the code:
 5. `crates/sound/src/lib.rs` — FM synthesis.
 6. `crates/app/src/lib.rs` — the user interface, and `platform.rs` for
    how it reaches any platform.
+7. `crates/zip/src/inflate.rs` — DEFLATE, for a break from hardware.

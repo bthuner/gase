@@ -15,12 +15,13 @@
 //!
 //! The crate has no dependencies outside the workspace and no I/O of its
 //! own: frontends feed it ROM bytes and button states, and receive frames
-//! and audio samples.
+//! and audio samples. ROM bytes may also be a zip archive containing the
+//! ROM, unpacked with [`gase_zip`] (see [`Cartridge::from_bytes`]).
 //!
 //! ```no_run
 //! use gase_core::{Cartridge, Config, Genesis};
 //!
-//! let rom = std::fs::read("game.bin").unwrap();
+//! let rom = std::fs::read("game.bin").unwrap(); // or "game.zip"
 //! let mut console = Genesis::new(Cartridge::from_bytes(&rom).unwrap(), &Config::default());
 //! for _ in 0..60 {
 //!     console.run_frame();
