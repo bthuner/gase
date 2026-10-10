@@ -30,6 +30,8 @@ pub(crate) struct Scratch {
     plane_a: LineBuffer,
     plane_b: LineBuffer,
     sprites: LineBuffer,
+    /// The winning colour index of each pixel.
+    colours: [u8; MAX_WIDTH],
 }
 
 impl Default for Scratch {
@@ -38,6 +40,7 @@ impl Default for Scratch {
             plane_a: [0; MAX_WIDTH + 8],
             plane_b: [0; MAX_WIDTH + 8],
             sprites: [0; MAX_WIDTH + 8],
+            colours: [0; MAX_WIDTH],
         }
     }
 }
@@ -61,42 +64,32 @@ struct LineInfo {
 }
 
 #[inline]
-const fn opaque(pixel: u8) -> bool {
+fn opaque(pixel: u8) -> bool {
     pixel & 0x0F != 0
 }
 
 #[inline]
-const fn high(pixel: u8) -> bool {
+fn high(pixel: u8) -> bool {
     pixel & PRIORITY != 0
 }
 
-/// Priority as a number: the *score* of each layer pixel, one table per
-/// layer (sprite, plane A, plane B), indexed by the layer pixel.
+/// Priority as a number: the *rank* of a layer pixel.
 ///
 /// The standard priority order is: high sprite, high A, high B, low sprite,
-/// low A, low B, backdrop. Giving each of those a rank (6 down to 1) in bits
-/// 8-10, above the pixel's colour in bits 0-5, turns "the first opaque layer
-/// in this order" into "the largest score": the compositor takes the
-/// maximum of three table lookups and the backdrop (rank 0), with no
-/// branches. Transparent pixels score 0 so they never win. [`Vdp::pick`] is
-/// the readable definition; a unit test checks they agree.
-const SCORES: [[u16; 256]; 3] = {
-    let mut tables = [[0; 256]; 3];
-    let mut layer = 0;
-    while layer < 3 {
-        let mut pixel = 0;
-        while pixel < 256 {
-            let p = pixel as u8;
-            if opaque(p) {
-                let rank = if high(p) { 6 - layer } else { 3 - layer };
-                tables[layer][pixel] = (rank as u16) << 8 | (p & 0x3F) as u16;
-            }
-            pixel += 1;
-        }
-        layer += 1;
+/// low A, low B, backdrop. Numbering those 6 down to 1 (`layer` is 0 for
+/// the sprites, 1 for plane A, 2 for plane B) turns "the first opaque layer
+/// in this order" into "the layer with the largest rank". Transparent pixels
+/// rank 0, like the backdrop, so they never win.
+#[inline]
+fn rank(pixel: u8, layer: u8) -> u8 {
+    if !opaque(pixel) {
+        0
+    } else if high(pixel) {
+        6 - layer
+    } else {
+        3 - layer
     }
-    tables
-};
+}
 
 impl Vdp {
     pub(crate) fn render_line(&mut self, line: u16) {
@@ -149,8 +142,15 @@ impl Vdp {
                 *pixel = Self::composite_shadow_highlight(palette, a, b, s, backdrop);
             }
         } else {
-            for (pixel, ((&a, &b), &s)) in out.iter_mut().zip(layers) {
-                *pixel = palette.get(Self::pick_fast(a, b, s, backdrop), Intensity::Normal);
+            // Two passes: choosing the colour index is plain byte arithmetic
+            // that the compiler turns into SIMD code (16 or 32 pixels per
+            // instruction); the palette lookup that follows cannot be.
+            let colours = &mut scratch.colours[..width];
+            for (colour, ((&a, &b), &s)) in colours.iter_mut().zip(layers) {
+                *colour = Self::pick_fast(a, b, s, backdrop);
+            }
+            for (pixel, &colour) in out.iter_mut().zip(colours.iter()) {
+                *pixel = palette.get(colour, Intensity::Normal);
             }
         }
 
@@ -165,34 +165,38 @@ impl Vdp {
     /// Standard priority: high sprite, high A, high B, low sprite, low A,
     /// low B, backdrop.
     #[inline]
-    const fn pick(a: u8, b: u8, s: u8, backdrop: u8) -> u8 {
+    fn pick(a: u8, b: u8, s: u8, backdrop: u8) -> u8 {
         let layers = [s, a, b];
-        let mut i = 0;
-        while i < layers.len() {
-            if opaque(layers[i]) && high(layers[i]) {
-                return layers[i] & 0x3F;
+        for &pixel in &layers {
+            if opaque(pixel) && high(pixel) {
+                return pixel & 0x3F;
             }
-            i += 1;
         }
-        let mut i = 0;
-        while i < layers.len() {
-            if opaque(layers[i]) {
-                return layers[i] & 0x3F;
+        for &pixel in &layers {
+            if opaque(pixel) {
+                return pixel & 0x3F;
             }
-            i += 1;
         }
         backdrop
     }
 
-    /// [`Self::pick`] for the per-pixel hot loop, using [`SCORES`].
+    /// [`Self::pick`] for the per-pixel hot loop, using [`rank`]: the
+    /// largest rank wins, without a single branch. [`Self::pick`] is the
+    /// readable definition; a unit test checks they agree.
     #[inline]
     fn pick_fast(a: u8, b: u8, s: u8, backdrop: u8) -> u8 {
-        let [sprite, plane_a, plane_b] = &SCORES;
-        let score = sprite[usize::from(s)]
-            .max(plane_a[usize::from(a)])
-            .max(plane_b[usize::from(b)])
-            .max(u16::from(backdrop));
-        (score & 0x3F) as u8
+        let (rank_s, rank_a, rank_b) = (rank(s, 0), rank(a, 1), rank(b, 2));
+        let best = rank_s.max(rank_a).max(rank_b);
+        let winner = if best == 0 {
+            backdrop
+        } else if best == rank_s {
+            s
+        } else if best == rank_a {
+            a
+        } else {
+            b
+        };
+        winner & 0x3F
     }
 
     /// Shadow/highlight mode.
