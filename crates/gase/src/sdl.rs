@@ -971,14 +971,14 @@ pub fn run_sdl(shell: Shell<'_>) -> Result<(), String> {
 
     'main: loop {
         // --- 1. Events in ----------------------------------------------------------
-        // In the background, sleep until something happens instead of
-        // spinning (on Android SDL even blocks in there until we return).
-        let waited = if background {
-            events.wait_event_timeout(250)
-        } else {
-            None
-        };
-        for event in waited.into_iter().chain(events.poll_iter()) {
+        // In the background, nap between looks at the events instead of
+        // spinning. (On Android, SDL even blocks inside `poll_iter` until
+        // the app is back. SDL's own `wait_event_timeout` would do here
+        // too, but on iOS and most desktops it polls every millisecond.)
+        if background {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        for event in events.poll_iter() {
             if let Some(change) = lifecycle(&event) {
                 match change {
                     Lifecycle::Background if !background => {
