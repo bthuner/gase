@@ -7,6 +7,16 @@ All notable changes to gase are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Statically recompiled games** (`gase_core::system::external`): a
+  console can be driven by an external 68000, such as a game recompiled to
+  native code by [gase-recomp](https://github.com/bthuner/gase-recomp).
+  The external CPU runs freely and the console catches up at its poll
+  points (an inverted form of the same scheduler, checked against the
+  normal one by running the interpreter through it). The interpreter's
+  state stays the CPU state between frames, so save states, rewind and the
+  debugger keep working. A recompiled game registers its code for its
+  ROM's CRC-32 and calls `gase::run_command_line`: every frontend then runs
+  it like any other game.
 - Release files for every platform: a `Release` workflow builds Linux,
   Windows and macOS (universal) programs with SDL2 linked in, the browser
   version, the Android APK and an unsigned iOS `.ipa`, and attaches them
