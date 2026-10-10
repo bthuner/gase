@@ -185,8 +185,8 @@ the headless runner (`--dump-vram`, `--dump-cram`, `--dump-debugger`,
 
 ## 9. Performance
 
-At the time of writing gase runs the test ROMs at 1000-1700 frames per
-second on one core of a modest 2.1 GHz Xeon, 16-28 times real time. The
+At the time of writing gase runs the test ROMs at 1000-1800 frames per
+second on one core of a modest 2.1 GHz Xeon, 17-30 times real time. The
 numbers, the scripts that produce them and how to profile are in
 [`benchmarks/`](../benchmarks/README.md). The main design choices:
 
