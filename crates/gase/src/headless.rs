@@ -5,16 +5,23 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::time::Instant;
 
+use std::path::Path;
+
+use gase_app::{App, Capabilities, Event, Key};
 use gase_core::{Debugger, Stop};
 
 use crate::cli::Options;
 use crate::debugger;
+use crate::desktop::Desktop;
 use crate::media::WavWriter;
 use crate::session::Session;
 
 const SAMPLE_RATE: u32 = 48_000;
 
 pub fn run(options: &Options) -> Result<(), String> {
+    if let Some(path) = &options.dump_ui {
+        return dump_ui(options, path);
+    }
     let mut session = Session::open(options, SAMPLE_RATE)?;
     eprintln!("{}", session.describe());
 
@@ -99,9 +106,84 @@ pub fn run(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
-fn write_png(path: &std::path::Path, canvas: &debugger::canvas::Canvas) -> Result<(), String> {
+fn write_png(path: &std::path::Path, canvas: &debugger::Canvas) -> Result<(), String> {
     std::fs::write(path, canvas.to_png())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     eprintln!("Saved {}", path.display());
     Ok(())
+}
+
+/// `--dump-ui`: run the app without a window and save what it would show.
+///
+/// This is the same [`App`] the window runs, driven by the same calls; only
+/// the pixels go to a PNG file instead of the screen. It makes pictures of
+/// the menus for documentation, and lets anyone check a layout at a phone's
+/// size and density from a desktop.
+fn dump_ui(options: &Options, path: &Path) -> Result<(), String> {
+    let mut platform = Desktop::new();
+    let caps = if options.mobile {
+        crate::mobile::phone_capabilities(SAMPLE_RATE)
+    } else {
+        Capabilities {
+            sample_rate: SAMPLE_RATE,
+            touch_screen: options.touch,
+            file_browser: true,
+            drop_files: true,
+            can_quit: true,
+            fullscreen: true,
+            debugger: true,
+            ..Capabilities::default()
+        }
+    };
+    let mut app = App::new(&mut platform, caps);
+    crate::cli::apply_overrides(&mut app, options);
+    let (width, height) = options.ui_size;
+    app.handle(
+        &mut platform,
+        Event::Resized {
+            width,
+            height,
+            pixels_per_point: options.ui_density,
+        },
+    );
+    if let Some(rom) = &options.rom {
+        app.open_rom(&mut platform, &rom.to_string_lossy())?;
+        if let Some(game) = app.game_mut() {
+            game.genesis.set_trace(options.trace);
+        }
+        for _ in 0..options.frames {
+            app.update(&mut platform);
+        }
+    }
+    let default = if options.rom.is_some() {
+        "pause"
+    } else {
+        "home"
+    };
+    for name in options.ui_screens.as_deref().unwrap_or(default).split(',') {
+        let name = name.trim();
+        if let Some(key) = name.strip_prefix("key:") {
+            // Press and release a key, e.g. `key:F5` to save a state first.
+            let key =
+                Key::from_name(key).ok_or_else(|| format!("--ui-screen: unknown key '{key}'"))?;
+            for pressed in [true, false] {
+                let event = Event::Key {
+                    key,
+                    pressed,
+                    repeat: false,
+                };
+                app.handle(&mut platform, event);
+                app.update(&mut platform);
+            }
+            continue;
+        }
+        if name != "game" && !app.show_screen(&mut platform, name) {
+            return Err(format!("--ui-screen: cannot show '{name}' here"));
+        }
+    }
+    // Two updates: the first lays the screen out, the second draws it
+    // settled (and lets touch controls appear over a running game).
+    app.update(&mut platform);
+    app.update(&mut platform);
+    write_png(path, &app.compose())
 }

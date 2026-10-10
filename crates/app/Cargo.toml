@@ -1,0 +1,15 @@
+[package]
+name = "gase-app"
+description = "The gase user interface: menus, settings, input mapping and on-screen controls, drawn in software, for any platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# No dependencies outside the workspace, no unsafe code and no I/O of its own:
+# everything platform-specific goes through the `Platform` trait.
+[dependencies]
+gase-core.workspace = true
+
+[lints]
+workspace = true

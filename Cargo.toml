@@ -4,7 +4,7 @@ members = ["crates/*"]
 default-members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 authors = ["Théo Hunerblaes"]
@@ -18,6 +18,9 @@ gase-z80 = { path = "crates/z80" }
 gase-sound = { path = "crates/sound" }
 gase-vdp = { path = "crates/vdp" }
 gase-core = { path = "crates/core" }
+gase-app = { path = "crates/app" }
+gase-zip = { path = "crates/zip" }
+gase = { path = "crates/gase" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -50,4 +53,15 @@ debug = "line-tables-only"
 inherits = "release"
 lto = false
 codegen-units = 16
+debug = false
+
+# The web build (`web/build.sh`): the release settings, minus everything a
+# browser does not need. `panic = "abort"` drops the unwinding machinery
+# (a panic in the page is fatal anyway: the shell reports its message to
+# the page first), `strip` the symbol names and debug info. opt-level 3
+# rather than "s": speed matters more than the last hundred kilobytes.
+[profile.wasm]
+inherits = "release"
+panic = "abort"
+strip = true
 debug = false

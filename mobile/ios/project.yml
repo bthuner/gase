@@ -1,0 +1,74 @@
+# The Xcode project of the iOS app, described for XcodeGen
+# (https://github.com/yonaskolb/XcodeGen; `brew install xcodegen`):
+#
+#   xcodegen generate      # writes Gase.xcodeproj (not kept in git)
+#
+# A generated project keeps the repository free of Xcode's large,
+# machine-written project.pbxproj; this file says everything that matters.
+#
+# The executable is linked from:
+#   Sources/main.m, Sources/GaseAppDelegate.m   our Objective-C glue
+#   ../build/ios/<platform>/libgase_mobile.a     the Rust code (build-rust.sh)
+#   ../build/ios/<platform>/libSDL2.a            SDL2 (build-sdl.sh)
+#   the system frameworks SDL uses
+name: Gase
+options:
+  bundleIdPrefix: io.github.bthuner
+  deploymentTarget:
+    iOS: "14.0"
+  createIntermediateGroups: true
+targets:
+  Gase:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+      - path: Info.plist
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_NAME: gase
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bthuner.gase
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CLANG_ENABLE_OBJC_ARC: YES
+        # arm64 only: every device since 2013 and the simulator on Apple
+        # silicon Macs. (For an Intel Mac's simulator, add x86_64 here and
+        # `rustup target add x86_64-apple-ios`; build-rust.sh handles it.)
+        ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+        HEADER_SEARCH_PATHS:
+          - $(PROJECT_DIR)/../build/SDL2/include
+          # SDL_uikitappdelegate.h, to subclass SDL's app delegate
+          - $(PROJECT_DIR)/../build/SDL2/src/video/uikit
+        LIBRARY_SEARCH_PATHS:
+          - $(PROJECT_DIR)/../build/ios/$(PLATFORM_NAME)
+        OTHER_LDFLAGS: [-lgase_mobile, -lSDL2, -liconv]
+        DEAD_CODE_STRIPPING: YES
+        # The pre-build script writes outside Xcode's sandbox (Cargo's target
+        # folder).
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: CoreAudio.framework
+      - sdk: CoreBluetooth.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreHaptics.framework
+      - sdk: CoreMotion.framework
+      - sdk: Foundation.framework
+      - sdk: GameController.framework
+      - sdk: Metal.framework
+      - sdk: OpenGLES.framework
+      - sdk: QuartzCore.framework
+      - sdk: UIKit.framework
+      - sdk: UniformTypeIdentifiers.framework
+    preBuildScripts:
+      - name: Build the Rust library
+        script: |
+          "$PROJECT_DIR/build-rust.sh"
+        basedOnDependencyAnalysis: false
+    scheme: {}

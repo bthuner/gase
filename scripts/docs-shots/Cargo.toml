@@ -1,0 +1,14 @@
+# A small helper for scripts/docs-screenshots.sh: it runs a ROM with
+# scripted button presses and saves the picture, optionally split into the
+# VDP's layers. It is not part of the gase workspace (hence the empty
+# [workspace] table) and is only built by that script.
+[package]
+name = "gase-docs-shots"
+version = "0.2.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gase-core = { path = "../../crates/core" }
+
+[workspace]

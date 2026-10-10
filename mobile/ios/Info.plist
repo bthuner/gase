@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    What iOS needs to know about the app before running it. The $(...) values
+    are filled in by Xcode from the build settings in project.yml.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>gase</string>
+    <key>CFBundleName</key>
+    <string>gase</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.2.0</string>
+    <key>CFBundleVersion</key>
+    <string>2</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
+    <!-- A (blank) launch screen: without one, iOS runs the app letterboxed
+         at an old iPhone's resolution. -->
+    <key>UILaunchScreen</key>
+    <dict/>
+    <!-- Full screen, no status bar, both orientations (the app has a layout
+         for each). -->
+    <key>UIRequiresFullScreen</key>
+    <true/>
+    <key>UIStatusBarHidden</key>
+    <true/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- Game controllers: tell iOS the app is played with an extended
+         gamepad (Xbox, PlayStation, MFi pads), so their buttons reach the
+         app instead of navigating the system. -->
+    <key>GCSupportsControllerUserInteraction</key>
+    <true/>
+    <key>GCSupportedGameControllers</key>
+    <array>
+        <dict>
+            <key>ProfileName</key>
+            <string>ExtendedGamepad</string>
+        </dict>
+    </array>
+
+    <!-- The Documents folder is shown in the Files app ("On My iPhone >
+         gase") and in Finder when the phone is connected: ROMs can be copied
+         into Documents/roms directly. -->
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <!-- Files opened from other apps are COPIED into Documents/Inbox (NO), not
+         used where they are (YES, which would need security-scoped access
+         every time the ROM is read). -->
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <false/>
+
+    <!-- The files gase opens: "Open in gase" in other apps and in Files. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Mega Drive / Genesis ROM</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>io.github.bthuner.gase.rom</string>
+                <string>public.zip-archive</string>
+            </array>
+        </dict>
+    </array>
+    <!-- iOS has no type for these extensions; declare one ("imported": the
+         format is not ours). -->
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>io.github.bthuner.gase.rom</string>
+            <key>UTTypeDescription</key>
+            <string>Mega Drive / Genesis ROM</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>md</string>
+                    <string>gen</string>
+                    <string>smd</string>
+                    <string>bin</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

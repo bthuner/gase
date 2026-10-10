@@ -14,7 +14,7 @@
 
 use gase_core::Genesis;
 
-use super::canvas::Canvas;
+use gase_app::canvas::Canvas;
 
 /// Number of tiles that fit in the 64 KiB of VRAM.
 pub const TILE_COUNT: usize = 2048;

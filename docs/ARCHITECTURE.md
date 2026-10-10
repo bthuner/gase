@@ -6,11 +6,16 @@ points to the module whose documentation goes deeper.
 ## 1. The big picture
 
 ```text
-                      ┌───────────── gase (frontend) ─────────────┐
-   keyboard/pads ───► │ Session: ROM, .srm saves, states, rewind  │ ───► window, speakers
-                      └──────────────────┬────────────────────────┘
-                                         │ run_frame(), frame(), drain_audio()
-                      ┌──────────────────▼──────────────── gase-core ┐
+   keyboard, pads,   ┌──── shell: gase (SDL2 desktop) · web · Android · iOS ────┐
+   mouse, touch ───► │ window, sound device, files, input devices              │ ───► screen, speakers
+                     └───────────────┬────────────────────────────▲────────────┘
+                                     │ Event                      │ Platform trait,
+                     ┌───────────────▼──── gase-app ──────────────┴────────────┐  Video
+                     │ App: home, file browser, menus, settings, input mapping,  │
+                     │ touch controls, save states, rewind, pacing               │
+                     └───────────────┬───────────────────────────────────────────┘
+                                     │ run_frame(), frame(), drain_audio(), set_buttons()
+                      ┌──────────────▼───────────────────────────────── gase-core ┐
                       │ Genesis                                       │
                       │   ├─ M68k (gase-m68k)  ──┐                     │
                       │   ├─ Z80  (gase-z80)   ──┤ Bus traits          │
@@ -26,7 +31,23 @@ points to the module whose documentation goes deeper.
 The core is a library with no I/O: it takes ROM bytes and button states and
 returns pixels and audio samples. That keeps it testable (see
 `crates/core/tests/smoke.rs`, which runs hand-assembled programs) and
-portable to any frontend.
+portable to any frontend. The user interface is built the same way: a
+library without I/O (`gase-app`, section 11) that every platform's thin
+shell drives.
+
+### Loading ROMs and archives
+
+`Cartridge::from_bytes` (`crates/core/src/cartridge.rs`) is the single
+entry point for ROM bytes, so every frontend gets the same formats: plain
+images (`.bin`, `.md`, `.gen`), interleaved `.smd` dumps (deinterleaved on
+load), and either of them inside a `.zip` archive. A zip file is
+recognised by its first bytes (`PK\3\4`), the ROM inside is picked by
+its extension (the largest `.md`/`.bin`/`.gen`/`.smd`/`.68k`/`.sgd` file)
+and extracted, with its CRC-32 checked, by `crates/zip`, a dependency-free
+ZIP reader and DEFLATE decoder whose module docs explain both formats:
+LZ77 back-references, canonical Huffman codes and how a compressed block
+describes its own codes. Frontends name save files after the file they
+opened, so `game.zip` saves to `game.srm` like `game.bin` does.
 
 ## 2. The CPUs and their buses
 
@@ -149,8 +170,17 @@ Frontends do not care which kind it is: `Cartridge::save_data()` and
 * The core has whole-system tests using tiny hand-assembled programs.
 * CI runs formatting, clippy, all tests and a dependency-free build on every
   pull request, and the big vector suites weekly.
+* `scripts/smoke-sdl.sh` runs the optimised windowed program with SDL's
+  dummy drivers and fails unless it is still running after five seconds.
+  Unit tests never open a window, so this is what catches crashes in the
+  shell. It exists because of one: `sdl2` 0.37's safe
+  `Texture::with_lock(Some(rect), ..)` hands SDL a pointer to a temporary
+  that is already gone, which only crashed once the optimiser reused its
+  stack slot (see `upload` in `crates/gase/src/sdl.rs`). Forbidding
+  `unsafe` in our crates says nothing about the `unsafe` inside
+  dependencies.
 
-## 8. Using the debugger to learn
+## 9. Using the debugger to learn
 
 The debugger (F1 in the window, see the README for its keys) shows the
 console's state as the chips see it. A few experiments that make the
@@ -179,11 +209,12 @@ and continue later, while `Genesis::run_frame` itself never looks at
 breakpoints. Memory is inspected with `Genesis::peek_*`, which never touch
 I/O registers (reading those has side effects). The windows are drawn into
 plain pixel buffers with a public-domain 8×8 font
-(`crates/gase/src/debugger/`), so the same views can be saved as PNG from
+(`crates/app/src/font.rs`, shared with the menus; the views are in
+`crates/gase/src/debugger/`), so the same views can be saved as PNG from
 the headless runner (`--dump-vram`, `--dump-cram`, `--dump-debugger`,
 `--break`).
 
-## 9. Performance
+## 10. Performance
 
 At the time of writing gase runs the test ROMs at 1000-1800 frames per
 second on one core of a modest 2.1 GHz Xeon, 17-30 times real time. The
@@ -221,6 +252,166 @@ works; read the fast path to learn how to make it quick. On top of that,
 every optimisation must leave the test-ROM frame hashes, the WAV output
 and the CPU test vectors bit-identical.
 
+## 11. The user interface and the platform contract
+
+An emulator frontend has to do the same things on every platform: show a
+picture, play sound, read buttons, open files, offer menus. Only the
+*how* differs. gase splits the two:
+
+* **`gase-app`** (`crates/app`) decides *what* happens: the home screen,
+  the file browser, the pause menu, save states, settings, how a key or a
+  finger becomes a console button, how fast to run. It has no
+  dependencies and no I/O, like the core.
+* A **shell** per platform does the *how*: `crates/gase/src/sdl.rs` (with
+  `desktop.rs` for files) on desktop and, the same file with `mobile.rs`
+  for files, on Android and iOS (see "Mobile shells" below);
+  `crates/web` with the page in `web/` in a browser (section 12).
+
+The contract between them is the `Platform` trait plus three flows
+(`crates/app/src/platform.rs` documents it with a diagram):
+
+```rust
+pub trait Platform {
+    fn now_ms(&self) -> u64;
+    fn log(&mut self, message: &str) {}
+    fn load(&mut self, file: FileKey<'_>) -> Option<Vec<u8>>;
+    fn store(&mut self, file: FileKey<'_>, data: &[u8]) -> Result<String, String>;
+    fn read_rom(&mut self, path: &str) -> Result<Vec<u8>, String>;
+    fn list_dir(&mut self, dir: Option<&str>) -> Result<Listing, String> { /* unsupported */ }
+    fn audio_queued(&self) -> Option<usize> { None }
+    fn queue_audio(&mut self, samples: &[i16]) {}
+    fn request(&mut self, request: Request) {}
+}
+```
+
+* **Events flow in**: the shell translates its system's input into
+  `Event`s (physical keys, standard-layout gamepad buttons, pointers with
+  ids for multi-touch, resizes with the display density, dropped files).
+* **Audio is pushed** to `queue_audio` as it is produced; the app reads
+  `audio_queued` to fine-tune the audio speed (section 5).
+* **Video is pulled**: `App::video()` returns the game frame with the
+  rectangle to draw it in, and an *overlay* with alpha for menus, touch
+  controls and messages. The overlay is drawn small (one font pixel = one
+  overlay pixel) and enlarged by a whole factor by the GPU, so it costs
+  a few hundred thousand pixels at most, and only while something is
+  shown: while playing with a keyboard or pad there is no overlay at all.
+* **Storage** says *what*, not *where*: `FileKey::State { rom, slot }`
+  becomes `game.state3` next to the ROM on desktop, a browser storage key
+  on the web.
+* **Slow or optional things are requests answered later**: the web's
+  file picker answers with an `Event::RomData` whenever the user is done.
+  `Capabilities` tell the app what the platform can do, so it only offers
+  what works (no "Quit" on the web, a native picker instead of the
+  built-in browser on phones).
+
+Inside the app, three ideas are worth reading about in the code:
+
+* **Immediate-mode UI** (`crates/app/src/ui.rs`): each screen is a function
+  that draws itself and returns what was chosen, every frame. Only the
+  focus and scroll position persist. Focus moves by *spatial navigation*
+  (to the nearest item in the pressed direction), so lists and grids work
+  with a d-pad without special code.
+* **Software rendering** with the 8×8 font (`canvas.rs`, `font.rs`): one
+  pixel buffer works everywhere and can be tested; `gase --headless
+  --dump-ui` saves the interface as PNG.
+* **Input mapping** (`input.rs`, `touch.rs`): bindings per player for keys
+  and pad buttons; the on-screen d-pad picks one of eight sectors by
+  comparing the finger's offsets with tan 22.5°, and every finger is
+  tracked separately, so the console buttons are simply the union of what
+  each one presses.
+
+### Mobile shells
+
+SDL2 runs on Android and iOS too, so the phone apps reuse the desktop's
+SDL shell instead of a framework of their own: `gase::sdl::run_sdl`
+takes `Shell::Desktop(options)` or `Shell::Mobile(hooks)`, and the few
+differences are decided in one place:
+
+| | Desktop | Phone |
+|---|---|---|
+| Files | config folder, saves next to the ROM | the app's sandbox (`SDL_GetPrefPath`), ROM copies in `roms/` |
+| Opening ROMs | built-in browser, drag and drop | the system's document picker, "Open with" |
+| Window | resizable, fullscreen on F11 | the whole screen, rotates (portrait/landscape layouts) |
+| Density | drawable ÷ window size | the same on iOS; display DPI ÷ 160 on Android |
+| Lifecycle | runs until closed | background: write saves, pause, stop drawing; foreground: resume |
+
+How it starts is the interesting part. Neither system calls `main`: on
+Android the Java VM starts SDL's `SDLActivity`, which loads `libSDL2.so`
+and `libmain.so` and calls the C function `SDL_main` on a thread of its
+own; on iOS a tiny Objective-C `main` hands control to UIKit through
+`SDL_UIKitRunApp`, which calls `SDL_main` once the app has launched. The
+`gase-mobile` crate (`crates/mobile`) exports `SDL_main` — compiled as a
+`cdylib` for Android, a `staticlib` linked into the iOS executable — and
+it is the only place in the workspace allowed to use `unsafe`, for that
+export and two calls into native code. What only Java or Objective-C can
+do (the document picker, "Open with", copying the file into the sandbox)
+is a few dozen lines of native glue that hands the copy's path back as an
+ordinary SDL drop-file event, which the shell already understood.
+`mobile/README.md` walks through the whole path, the build and the
+lifecycle.
+
+Two rules came with the touch screen: on-screen controls hide while a
+gamepad is being used (the last input wins), and `Event::Suspend` writes
+the save and settings immediately, because a phone may kill a backgrounded
+app without warning.
+
+## 12. The web shell
+
+`crates/web` (gase-web) is the platform contract implemented for a
+browser tab, and `web/` is the page that hosts it. It is written to show
+how a Rust program runs in a browser with nothing in between: no
+wasm-bindgen, no web-sys, no bundler.
+
+* **One address space.** The module is built for `wasm32-unknown-unknown`
+  as a `cdylib`. Its *linear memory* is one `ArrayBuffer` that the page
+  can see; a Rust pointer is an offset into it. So pictures and sound are
+  never serialised: Rust returns `vec.as_ptr()` as a number, the page
+  wraps `new Uint8ClampedArray(memory.buffer, ptr, len)` and hands it to
+  `putImageData`, or copies samples out of an `Int16Array` view. Views
+  are made afresh each time, because growing the memory replaces the
+  buffer.
+* **A numbers-only boundary** (`crates/web/src/abi.rs`). About twenty
+  exports (`gase_key`, `gase_pointer`, `gase_update`, `gase_video` …) and
+  nine imports (`file_read`, `file_write`, `audio_push`, `request` …),
+  all taking integers and floats. Text and ROMs from the page go through
+  an *inbox* buffer the module sizes on request. After each frame the
+  module fills a seventeen-word *frame description* (picture addresses and
+  sizes, where to draw them, how to pace), which the page reads through
+  one `Uint32Array`, like a C struct. The workspace forbids unsafe code;
+  this crate denies it instead, because exporting under a fixed name
+  needs `#[unsafe(no_mangle)]` and importing needs an `unsafe extern`
+  block with `safe fn` declarations. Both stay in `abi.rs`, which has no
+  `unsafe { }` block. Everything else is a `Shell` generic over a `Host`
+  trait, tested natively with a fake page.
+* **Storage** is synchronous for the app but IndexedDB is asynchronous:
+  the page reads every stored file into a `Map` at startup and writes
+  behind, one transaction per frame. Opened ROMs are kept (the eight most
+  recently used) so the recent list works after a reload.
+* **Audio** runs in an `AudioWorklet` on the browser's real-time thread,
+  fed from the main thread either through a ring buffer in a
+  `SharedArrayBuffer` (exact queue level, but only allowed on
+  cross-origin-isolated pages, which needs COOP/COEP headers that GitHub
+  Pages cannot send) or through posted chunks with the queue level
+  estimated from the worklet's reports and the audio clock (works
+  everywhere). Sound starts at the first click or key press, as browsers
+  require; until then the app paces by the clock.
+* **Pacing** follows the app's `Pacing` inside `requestAnimationFrame`.
+  Each display frame owes `elapsed × the console's rate` emulated frames
+  (rounded, the remainder carried over, so a 60 Hz display gets a steady
+  one per refresh whatever its jitter). With sound the audio queue
+  steers too: more than two frames' worth below its 50 ms target adds a
+  frame, above it skips one; small differences between the sound card's
+  clock and the console's are left to the app's dynamic rate control,
+  which stretches the audio by up to 0.5 %. The queue level is only an
+  estimate without SharedArrayBuffer and audio devices consume in bursts,
+  so a tight rule ("run until the queue is full") would alternate 0 and 2
+  frames per refresh. Fast-forward runs as many updates as fit in 12 ms.
+* **Input** is translated in Rust tables: `KeyboardEvent.code` (a
+  physical key, like the app's `Key`), the Gamepad API's "standard"
+  mapping (polled each frame, changes sent as events, triggers as axes),
+  Pointer Events with their `pointerId` for multi-touch, and
+  `devicePixelRatio` for the UI scale.
+
 ## Where to start reading
 
 1. `crates/core/src/system.rs` — the main loop.
@@ -228,3 +419,10 @@ and the CPU test vectors bit-identical.
 3. `crates/vdp/src/lib.rs` — what the VDP is.
 4. `crates/m68k/src/lib.rs` and `crates/z80/src/lib.rs` — the CPUs.
 5. `crates/sound/src/lib.rs` — FM synthesis.
+6. `crates/app/src/lib.rs` — the user interface, and `platform.rs` for
+   how it reaches any platform.
+7. `crates/zip/src/inflate.rs` — DEFLATE, for a break from hardware.
+8. `crates/gase/src/sdl.rs` and `crates/mobile/src/lib.rs` — one shell for
+   desktops and phones, and how a Rust library becomes an app.
+9. `crates/web/src/lib.rs`, then `web/gase.js` — the emulator in a web
+   page.
