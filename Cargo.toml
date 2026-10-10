@@ -54,3 +54,14 @@ inherits = "release"
 lto = false
 codegen-units = 16
 debug = false
+
+# The web build (`web/build.sh`): the release settings, minus everything a
+# browser does not need. `panic = "abort"` drops the unwinding machinery
+# (a panic in the page is fatal anyway: the shell reports its message to
+# the page first), `strip` the symbol names and debug info. opt-level 3
+# rather than "s": speed matters more than the last hundred kilobytes.
+[profile.wasm]
+inherits = "release"
+panic = "abort"
+strip = true
+debug = false

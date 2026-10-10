@@ -257,6 +257,9 @@ picture, play sound, read buttons, open files, offer menus. Only the
   `desktop.rs` for files) on desktop and, the same file with `mobile.rs`
   for files, on Android and iOS (see "Mobile shells" below); a web shell
   (JavaScript + WASM) follows the same pattern.
+  `desktop.rs` for files) on desktop; `crates/web` with the page in
+  `web/` in a browser (section 11); Android/iOS shells (SDL2) can follow
+  the same pattern.
 
 The contract between them is the `Platform` trait plus three flows
 (`crates/app/src/platform.rs` documents it with a diagram):
@@ -345,6 +348,62 @@ Two rules came with the touch screen: on-screen controls hide while a
 gamepad is being used (the last input wins), and `Event::Suspend` writes
 the save and settings immediately, because a phone may kill a backgrounded
 app without warning.
+## 11. The web shell
+
+`crates/web` (gase-web) is the platform contract implemented for a
+browser tab, and `web/` is the page that hosts it. It is written to show
+how a Rust program runs in a browser with nothing in between: no
+wasm-bindgen, no web-sys, no bundler.
+
+* **One address space.** The module is built for `wasm32-unknown-unknown`
+  as a `cdylib`. Its *linear memory* is one `ArrayBuffer` that the page
+  can see; a Rust pointer is an offset into it. So pictures and sound are
+  never serialised: Rust returns `vec.as_ptr()` as a number, the page
+  wraps `new Uint8ClampedArray(memory.buffer, ptr, len)` and hands it to
+  `putImageData`, or copies samples out of an `Int16Array` view. Views
+  are made afresh each time, because growing the memory replaces the
+  buffer.
+* **A numbers-only boundary** (`crates/web/src/abi.rs`). About twenty
+  exports (`gase_key`, `gase_pointer`, `gase_update`, `gase_video` …) and
+  nine imports (`file_read`, `file_write`, `audio_push`, `request` …),
+  all taking integers and floats. Text and ROMs from the page go through
+  an *inbox* buffer the module sizes on request. After each frame the
+  module fills a seventeen-word *frame description* (picture addresses and
+  sizes, where to draw them, how to pace), which the page reads through
+  one `Uint32Array`, like a C struct. The workspace forbids unsafe code;
+  this crate denies it instead, because exporting under a fixed name
+  needs `#[unsafe(no_mangle)]` and importing needs an `unsafe extern`
+  block with `safe fn` declarations. Both stay in `abi.rs`, which has no
+  `unsafe { }` block. Everything else is a `Shell` generic over a `Host`
+  trait, tested natively with a fake page.
+* **Storage** is synchronous for the app but IndexedDB is asynchronous:
+  the page reads every stored file into a `Map` at startup and writes
+  behind, one transaction per frame. Opened ROMs are kept (the eight most
+  recently used) so the recent list works after a reload.
+* **Audio** runs in an `AudioWorklet` on the browser's real-time thread,
+  fed from the main thread either through a ring buffer in a
+  `SharedArrayBuffer` (exact queue level, but only allowed on
+  cross-origin-isolated pages, which needs COOP/COEP headers that GitHub
+  Pages cannot send) or through posted chunks with the queue level
+  estimated from the worklet's reports and the audio clock (works
+  everywhere). Sound starts at the first click or key press, as browsers
+  require; until then the app paces by the clock.
+* **Pacing** follows the app's `Pacing` inside `requestAnimationFrame`.
+  Each display frame owes `elapsed × the console's rate` emulated frames
+  (rounded, the remainder carried over, so a 60 Hz display gets a steady
+  one per refresh whatever its jitter). With sound the audio queue
+  steers too: more than two frames' worth below its 50 ms target adds a
+  frame, above it skips one; small differences between the sound card's
+  clock and the console's are left to the app's dynamic rate control,
+  which stretches the audio by up to 0.5 %. The queue level is only an
+  estimate without SharedArrayBuffer and audio devices consume in bursts,
+  so a tight rule ("run until the queue is full") would alternate 0 and 2
+  frames per refresh. Fast-forward runs as many updates as fit in 12 ms.
+* **Input** is translated in Rust tables: `KeyboardEvent.code` (a
+  physical key, like the app's `Key`), the Gamepad API's "standard"
+  mapping (polled each frame, changes sent as events, triggers as axes),
+  Pointer Events with their `pointerId` for multi-touch, and
+  `devicePixelRatio` for the UI scale.
 
 ## Where to start reading
 
@@ -358,3 +417,5 @@ app without warning.
 7. `crates/zip/src/inflate.rs` — DEFLATE, for a break from hardware.
 8. `crates/gase/src/sdl.rs` and `crates/mobile/src/lib.rs` — one shell for
    desktops and phones, and how a Rust library becomes an app.
+9. `crates/web/src/lib.rs`, then `web/gase.js` — the emulator in a web
+   page.

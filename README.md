@@ -41,6 +41,35 @@ cargo build --release -p gase --no-default-features
 ./target/release/gase --headless --frames 600 --screenshot shot.png game.bin
 ```
 
+### In the browser
+
+The same emulator and menus also run in a web page, compiled to
+WebAssembly (no JavaScript framework, no npm, no wasm-bindgen):
+
+```sh
+rustup target add wasm32-unknown-unknown   # once
+web/build.sh                               # → web/gase_web.wasm (~0.5 MB, ~160 KB gzipped)
+python3 -m http.server -d web 8000         # then open http://localhost:8000/
+```
+
+Open a ROM (`.md`, `.bin`, `.gen`, `.smd` or `.zip`) with *Open ROM…* or
+drop it on the page, or try the free 240p Test Suite from the link under
+the home screen. Keyboard, gamepads (Gamepad API), mouse and multi-touch
+on-screen controls all work. Games you opened, their saves, save states
+and the settings stay in the browser's storage (IndexedDB); screenshots
+(F12) are downloaded. The page is a **progressive web app**: in Chrome
+on Android use *Install app* (or *Add to Home screen*), in Safari on iOS
+*Share → Add to Home Screen*; it then opens full-screen and works
+offline. Add `?stats` to the address for a speed meter.
+
+`web/build.sh --out docs/play` assembles the playable site under the
+project site for GitHub Pages; the `Web` workflow builds it on every push
+and can publish it (opt-in, see `.github/workflows/web.yml`). The .wasm
+is never committed. `web/tests/smoke.mjs` drives the page in a headless
+Chromium (needs the `playwright` package; not part of CI yet). How the
+shell works: [`crates/web/src/lib.rs`](crates/web/src/lib.rs) and section
+11 of [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Using it
 
 ```sh
@@ -161,6 +190,10 @@ mobile/
   android/    the Android app: Gradle project, GaseActivity.java
   ios/        the iOS app: XcodeGen project, Objective-C app delegate
   README.md   building and installing the phone apps
+  gase/       the desktop binary: an SDL2 shell around app/, or headless
+  web/        the browser shell: app/ as a WebAssembly module (gase-web)
+web/          the page around it: plain HTML, CSS and JavaScript modules,
+              audio worklet, service worker; build.sh builds the module
 docs/
   VIABILITY.md     why Rust, effort and risk analysis
   ARCHITECTURE.md  how the pieces fit together — start here to learn

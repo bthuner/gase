@@ -22,3 +22,9 @@ rustc-ice-*.txt
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# The web build: web/build.sh puts the module next to index.html, and
+# `web/build.sh --out docs/play` assembles the site for GitHub Pages
+# (the Pages workflow builds both; neither is committed).
+web/gase_web.wasm
+docs/play/
