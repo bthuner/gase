@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the project site (docs/) for broken relative links. Standard library only.
 
-    scripts/check-docs-links.py [docs/index.html ...]
+    scripts/check-docs-links.py [docs/index.html docs/fr/index.html ...]
 
 Every relative href/src in the HTML files, every url() in their CSS, and
 every #fragment must resolve. External links (http, https, mailto) are not
@@ -58,11 +58,11 @@ def check(page):
             continue
         if not parsed.path:
             if parsed.fragment and parsed.fragment not in parser.ids:
-                errors.append(f"{page.name}: no element with id '{parsed.fragment}'")
-            continue
-        if parsed.path in GENERATED and base.parent == root:
+                errors.append(f"{page.relative_to(root.parent)}: no element with id '{parsed.fragment}'")
             continue
         target = (base.parent / urllib.parse.unquote(parsed.path)).resolve()
+        if any(target == (root / g).resolve() for g in GENERATED):
+            continue
         if not target.exists():
             errors.append(f"{base.relative_to(root.parent)}: missing {link}")
         elif root not in target.parents and target != root:
@@ -71,7 +71,11 @@ def check(page):
 
 
 def main():
-    pages = [pathlib.Path(p).resolve() for p in sys.argv[1:]] or sorted(root.glob("*.html"))
+    # Every page of the site: docs/index.html and the translations under
+    # docs/<language>/ (the generated player under play/ is not ours).
+    pages = [pathlib.Path(p).resolve() for p in sys.argv[1:]] or sorted(
+        p for p in root.rglob("*.html") if "play" not in p.relative_to(root).parts
+    )
     errors, count = [], 0
     for page in pages:
         e, n = check(page)

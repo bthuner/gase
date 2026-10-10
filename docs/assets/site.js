@@ -4,6 +4,26 @@
   var doc = document.documentElement;
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  // The few words this script writes itself, in the page's language
+  // (<html lang="fr"> for docs/fr/, English otherwise).
+  var words = {
+    en: {
+      light: "Light", dark: "Dark",
+      switchTo: function (t) { return "Switch to " + t + " theme"; },
+      contents: "Contents",
+      lz: function (n, l, r) { return "<b>" + n + "</b> characters became <b>" + l + "</b> literals and <b>" + r + "</b> back-references."; },
+      lzTitle: function (len, dist) { return "copy " + len + " bytes from " + dist + " back"; }
+    },
+    fr: {
+      light: "Clair", dark: "Sombre",
+      switchTo: function (t) { return t === "light" ? "Passer au thème clair" : "Passer au thème sombre"; },
+      contents: "Sommaire",
+      lz: function (n, l, r) { return "<b>" + n + "</b> caractères sont devenus <b>" + l + "</b> littéraux et <b>" + r + "</b> références arrière."; },
+      lzTitle: function (len, dist) { return "copier " + len + " octets depuis " + dist + " en arrière"; }
+    }
+  };
+  var say = words[(doc.lang || "en").slice(0, 2)] || words.en;
+
   // ---------------------------------------------------------------- theme
   var toggle = document.querySelector("[data-theme-toggle]");
   function currentTheme() {
@@ -13,8 +33,8 @@
   function label() {
     if (!toggle) return;
     var next = currentTheme() === "dark" ? "light" : "dark";
-    toggle.textContent = next === "light" ? "Light" : "Dark";
-    toggle.setAttribute("aria-label", "Switch to " + next + " theme");
+    toggle.textContent = next === "light" ? say.light : say.dark;
+    toggle.setAttribute("aria-label", say.switchTo(next));
   }
   if (toggle) {
     label();
@@ -49,7 +69,7 @@
     var max = doc.scrollHeight - window.innerHeight;
     if (bar) bar.style.setProperty("--p", max > 0 ? Math.min(1, window.scrollY / max).toFixed(4) : 0);
     if (where) {
-      var title = "Contents";
+      var title = say.contents;
       var line = window.innerHeight * 0.3;
       chapters.forEach(function (c) { if (c.getBoundingClientRect().top < line) title = c.dataset.title; });
       if (where.textContent !== title) where.textContent = title;
@@ -130,7 +150,7 @@
           if (n > best) { best = n; dist = i - j; }
         }
         if (best >= 3) {
-          html += '<span class="ref" title="copy ' + best + " bytes from " + dist + ' back">' + esc(t.substr(i, best)) + "<small>" + dist + "</small></span>";
+          html += '<span class="ref" title="' + say.lzTitle(best, dist) + '">' + esc(t.substr(i, best)) + "<small>" + dist + "</small></span>";
           i += best; refs++;
         } else {
           html += '<span class="lit">' + esc(t[i]) + "</span>";
@@ -138,7 +158,7 @@
         }
       }
       out.innerHTML = html;
-      stats.innerHTML = "<b>" + t.length + "</b> characters became <b>" + lits + "</b> literals and <b>" + refs + "</b> back-references.";
+      stats.innerHTML = say.lz(t.length, lits, refs);
     };
     input.addEventListener("input", compress);
     compress();
