@@ -86,7 +86,11 @@ impl Vdp {
     }
 
     /// Start a new scanline: update blanking flags and render it if visible.
+    ///
+    /// Any access slots left in the previous line are used first, with the
+    /// previous line's slot pattern.
     pub fn begin_line(&mut self, line: u16) {
+        self.next_line_slots();
         self.line = line;
         let active = self.active_lines();
         if line == 0 {

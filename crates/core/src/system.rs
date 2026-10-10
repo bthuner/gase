@@ -16,6 +16,15 @@
 //!    apart.
 //! 3. The sound chips are synchronised lazily: whenever a CPU touches them,
 //!    and at the end of each frame.
+//! 4. So is the VDP's memory side: queued writes and DMA steps happen in the
+//!    VDP's access slots, which are caught up (`Vdp::advance`) whenever a
+//!    CPU touches a VDP port and at the end of each line. A data-port access
+//!    that must wait for a slot adds a stall to the 68000's clock.
+//!
+//! While a 68000-to-VDP DMA runs the 68000 is frozen: instead of executing
+//! instructions, the loop lets the VDP progress up to the next event and
+//! moves the 68000's clock along, until the DMA ends. Line events (and so
+//! rendering) still happen on time in the middle of a long transfer.
 //!
 //! This "catch-up" design is simple, fast, and accurate enough for virtually
 //! all software, because the CPUs only interact through shared memory and
@@ -98,7 +107,8 @@ const STATE_MAGIC: &[u8; 4] = b"GASE";
 /// * 1: first version.
 /// * 2: serial EEPROM state, after the SRAM contents (EEPROM games used to
 ///   be treated as having SRAM).
-const STATE_VERSION: u32 = 2;
+/// * 3: VDP write FIFO, access-slot clock and DMA progress.
+const STATE_VERSION: u32 = 3;
 
 /// A borrowed view of the last rendered frame.
 #[derive(Clone, Copy, Debug)]
@@ -177,6 +187,7 @@ impl Genesis {
             now: 0,
             line_start: 0,
             m68k_wait: 0,
+            vdp_stall: 0,
         };
         let mut genesis = Self {
             m68k: M68k::new(),
@@ -323,6 +334,10 @@ impl Genesis {
     /// Run both CPUs until the 68000 reaches master clock `target`.
     fn run_until(&mut self, target: u64) {
         while self.m68k_clock < target {
+            if self.hw.vdp.dma_68k_active() {
+                self.run_dma(target);
+                continue;
+            }
             self.hw.now = self.m68k_clock;
             self.m68k.set_interrupt_level(self.hw.vdp.interrupt_level());
             if self.trace_remaining > 0 {
@@ -330,11 +345,9 @@ impl Genesis {
             }
             let mut cycles = self.m68k.step(&mut self.hw);
             cycles += std::mem::take(&mut self.hw.m68k_wait);
-            if self.hw.vdp.dma_68k_pending() {
-                cycles += self.run_dma();
-            }
             self.hw.reset_requested = false;
-            self.m68k_clock += u64::from(cycles) * 7;
+            self.m68k_clock +=
+                u64::from(cycles) * 7 + u64::from(std::mem::take(&mut self.hw.vdp_stall));
             self.run_z80_until(self.m68k_clock);
         }
     }
@@ -355,21 +368,23 @@ impl Genesis {
         }
     }
 
-    /// Perform a 68000-to-VDP DMA. Returns the 68000 cycles it was frozen.
-    fn run_dma(&mut self) -> u32 {
-        let Hardware { vdp, cart, ram, .. } = &mut self.hw;
-        vdp.run_dma_68k(|addr| {
-            let addr = addr & 0xFF_FFFE;
-            if addr < 0x40_0000 {
-                cart.read_word(addr)
-            } else if addr >= 0xE0_0000 {
-                let i = (addr & 0xFFFF) as usize;
-                u16::from_be_bytes([ram[i], ram[i + 1]])
-            } else {
-                // DMA from other areas (e.g. Mega CD word RAM) is unsupported.
-                0
-            }
-        })
+    /// The 68000 is frozen by a 68000-to-VDP DMA: let the VDP move data up
+    /// to `target` (or until the transfer ends, whichever comes first) and
+    /// move the 68000's clock along without running it. The Z80 keeps
+    /// running meanwhile.
+    fn run_dma(&mut self, target: u64) {
+        if self.hw.vdp.dma_68k_pending() {
+            self.hw.start_dma_68k();
+        }
+        let line_start = self.hw.line_start;
+        self.hw.vdp.advance((target - line_start) as u32);
+        let resume = if self.hw.vdp.dma_68k_active() {
+            target
+        } else {
+            line_start + u64::from(self.hw.vdp.dma_68k_done_at())
+        };
+        self.m68k_clock = self.m68k_clock.max(resume);
+        self.run_z80_until(self.m68k_clock);
     }
 
     fn resample_audio(&mut self) {

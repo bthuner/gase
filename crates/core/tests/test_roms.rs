@@ -44,8 +44,9 @@ const CASES: &[Case] = &[
         name: "240p test suite PLUGE",
         path: "240p-test-suite/240pSuite-1.23.bin",
         frames: 400,
-        // Test Patterns -> first entry.
-        presses: &[(300, 305, Buttons::A), (330, 335, Buttons::A)],
+        // Test Patterns -> first entry. The second press waits for the
+        // pattern menu, which takes ~19 frames to load with the display on.
+        presses: &[(300, 305, Buttons::A), (345, 350, Buttons::A)],
         lenient: false,
         expected: 0x92f08ddbca1d550a,
     },
@@ -94,7 +95,7 @@ const CASES: &[Case] = &[
         frames: 1200,
         presses: &[],
         lenient: false,
-        expected: 0xf03b69da9c72dc09,
+        expected: 0xb268223d07378971,
     },
 ];
 

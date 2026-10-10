@@ -1,80 +1,10 @@
 //! Whole-system tests using tiny hand-assembled programs, so no ROM files
 //! are needed.
 
+mod common;
+
+use common::{Rom, VDP_CTRL, VDP_DATA};
 use gase_core::{Cartridge, Config, Genesis};
-
-/// Builds a ROM image: vectors, a minimal header, and code at 0x200.
-struct Rom {
-    bytes: Vec<u8>,
-    pc: usize,
-}
-
-impl Rom {
-    fn new() -> Self {
-        let mut bytes = vec![0u8; 0x1000];
-        bytes[0..4].copy_from_slice(&0x00FF_FE00u32.to_be_bytes()); // initial SSP
-        bytes[4..8].copy_from_slice(&0x0000_0200u32.to_be_bytes()); // initial PC
-        bytes[0x100..0x110].copy_from_slice(b"SEGA MEGA DRIVE ");
-        bytes[0x1F0] = b'U';
-        Self { bytes, pc: 0x200 }
-    }
-
-    fn words(&mut self, words: &[u16]) -> &mut Self {
-        for w in words {
-            self.bytes[self.pc..self.pc + 2].copy_from_slice(&w.to_be_bytes());
-            self.pc += 2;
-        }
-        self
-    }
-
-    fn vector(&mut self, number: usize, target: u32) -> &mut Self {
-        self.bytes[number * 4..number * 4 + 4].copy_from_slice(&target.to_be_bytes());
-        self
-    }
-
-    fn at(&mut self, pc: usize) -> &mut Self {
-        self.pc = pc;
-        self
-    }
-
-    // A few 68000 instructions, encoded by hand.
-
-    /// `move.w #imm, (addr).l`
-    fn move_w(&mut self, imm: u16, addr: u32) -> &mut Self {
-        self.words(&[0x33FC, imm, (addr >> 16) as u16, addr as u16])
-    }
-
-    /// `move.l #imm, (addr).l`
-    fn move_l(&mut self, imm: u32, addr: u32) -> &mut Self {
-        self.words(&[
-            0x23FC,
-            (imm >> 16) as u16,
-            imm as u16,
-            (addr >> 16) as u16,
-            addr as u16,
-        ])
-    }
-
-    /// `move.b #imm, (addr).l`
-    fn move_b(&mut self, imm: u8, addr: u32) -> &mut Self {
-        self.words(&[0x13FC, u16::from(imm), (addr >> 16) as u16, addr as u16])
-    }
-
-    /// `bra.s *` (spin forever)
-    fn spin(&mut self) -> &mut Self {
-        self.words(&[0x60FE])
-    }
-
-    fn console(&self) -> Genesis {
-        Genesis::new(
-            Cartridge::from_bytes(&self.bytes).unwrap(),
-            &Config::default(),
-        )
-    }
-}
-
-const VDP_CTRL: u32 = 0xC0_0004;
-const VDP_DATA: u32 = 0xC0_0000;
 
 #[test]
 fn backdrop_colour_reaches_the_frame() {

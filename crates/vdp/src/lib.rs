@@ -31,7 +31,13 @@
 //! # How this implementation is organised
 //!
 //! * [`ports`](crate::Vdp::write_control): the CPU interface — control port
-//!   commands, the data port and DMA transfers.
+//!   commands, the data port and the status register.
+//! * `slots`: the *access slots*, the few moments in each line when the
+//!   VDP lets the outside world at its memory.
+//! * `fifo`: the 4-entry write FIFO that queues data-port writes until a
+//!   slot comes.
+//! * `dma`: the VDP's clock ([`Vdp::advance`]) which drains the FIFO and runs
+//!   the three kinds of DMA slot by slot.
 //! * `timing`: scanline bookkeeping, interrupts and the HV counter.
 //! * `render`: a scanline renderer producing 32-bit pixels.
 //! * `color`: the 9-bit colour to RGB conversion, including the non-linear
@@ -42,10 +48,20 @@
 //! CPUs during horizontal blanking (raster effects, typically from the
 //! horizontal interrupt) therefore show up on the next line, which is what
 //! virtually all games rely on.
+//!
+//! Memory writes, on the other hand, are timed: the system tells the VDP
+//! the time with [`Vdp::advance`] before each port access, and data-port
+//! writes and DMA land in VRAM, CRAM and VSRAM at the access slot where the
+//! real chip would perform them. A CPU that writes faster than the slots
+//! allow is stalled ([`Vdp::take_cpu_stall`]); a 68000-to-VDP DMA freezes
+//! the 68000 until [`Vdp::dma_68k_active`] turns false.
 
 mod color;
+mod dma;
+mod fifo;
 mod ports;
 mod render;
+mod slots;
 mod timing;
 
 use gase_savestate::{Error, Reader, State, Writer};
@@ -82,12 +98,6 @@ pub struct Vdp {
     code: u8,
     /// The current VRAM/CRAM/VSRAM address.
     address: u16,
-    /// A DMA fill has been set up and waits for the data port write that
-    /// provides its value.
-    dma_fill_pending: bool,
-    /// A 68000-to-VDP DMA has been requested; the system bus must run it with
-    /// [`Vdp::run_dma_68k`] because only the bus can read 68000 memory.
-    dma_68k_pending: bool,
     /// Buffered word for data port reads.
     read_buffer: u16,
 
@@ -104,6 +114,12 @@ pub struct Vdp {
 
     // --- Timing --------------------------------------------------------------
     line: u16,
+
+    // --- Memory access timing (see the `slots`, `fifo` and `dma` modules) ---
+    /// Data-port writes waiting for an access slot.
+    fifo: fifo::Fifo,
+    /// The slot clock and the DMA in progress.
+    engine: dma::Engine,
 
     /// Copy of the first 4 bytes (Y, size, link) of each sprite table entry.
     ///
@@ -133,8 +149,8 @@ impl Vdp {
             write_pending: false,
             code: 0,
             address: 0,
-            dma_fill_pending: false,
-            dma_68k_pending: false,
+            fifo: fifo::Fifo::default(),
+            engine: dma::Engine::default(),
             read_buffer: 0,
             vint_pending: false,
             hint_pending: false,
@@ -163,8 +179,13 @@ impl Vdp {
         self.write_pending = false;
         self.code = 0;
         self.address = 0;
-        self.dma_fill_pending = false;
-        self.dma_68k_pending = false;
+        // Pending writes and DMA are abandoned; the slot clock keeps going.
+        self.fifo.clear();
+        let pos = self.engine.pos;
+        self.engine = dma::Engine {
+            pos,
+            ..dma::Engine::default()
+        };
         self.vint_pending = false;
         self.hint_pending = false;
         self.hv_latch = None;
@@ -250,8 +271,6 @@ impl State for Vdp {
         self.write_pending.save(w);
         self.code.save(w);
         self.address.save(w);
-        self.dma_fill_pending.save(w);
-        self.dma_68k_pending.save(w);
         self.read_buffer.save(w);
         self.vint_pending.save(w);
         self.hint_pending.save(w);
@@ -265,6 +284,8 @@ impl State for Vdp {
         u8::from(self.standard == VideoStandard::Pal).save(w);
         self.line.save(w);
         self.sat_cache.save(w);
+        self.fifo.save(w);
+        self.engine.save(w);
     }
 
     fn load(&mut self, r: &mut Reader<'_>) -> Result<(), Error> {
@@ -275,8 +296,6 @@ impl State for Vdp {
         self.write_pending.load(r)?;
         self.code.load(r)?;
         self.address.load(r)?;
-        self.dma_fill_pending.load(r)?;
-        self.dma_68k_pending.load(r)?;
         self.read_buffer.load(r)?;
         self.vint_pending.load(r)?;
         self.hint_pending.load(r)?;
@@ -298,6 +317,8 @@ impl State for Vdp {
         };
         self.line.load(r)?;
         self.sat_cache.load(r)?;
+        self.fifo.load(r)?;
+        self.engine.load(r)?;
         self.palette.rebuild(&self.cram);
         Ok(())
     }
