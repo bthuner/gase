@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 6-11 Auto Backup: back up settings, saves and states, but not
+     the copies of ROMs (they are large, and the user has the originals). -->
+<full-backup-content>
+    <exclude domain="file" path="roms/" />
+</full-backup-content>

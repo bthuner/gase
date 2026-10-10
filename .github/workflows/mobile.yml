@@ -1,0 +1,135 @@
+# The Android and iOS apps (see mobile/README.md).
+#
+# These builds need what a developer's machine would: the Android SDK and
+# NDK (preinstalled on ubuntu-latest runners), Xcode (macos-latest). They
+# check that the apps build and package; running them needs a phone, an
+# emulator or a simulator.
+name: Mobile
+
+on:
+  push:
+    # feature/mobile: so the branch that adds the apps is checked before its
+    # pull request exists; drop it once merged.
+    branches: [main, develop, feature/mobile]
+  pull_request:
+    paths:
+      - mobile/**
+      - crates/app/**
+      - crates/gase/**
+      - crates/mobile/**
+      - Cargo.lock
+      - .github/workflows/mobile.yml
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep equal to ndkVersion in mobile/android/app/build.gradle.
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  rust-targets:
+    name: Rust for phone targets (clippy, no SDK needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      # Type-checks the Rust side of the apps, including the Android- and
+      # iOS-only native code, for every target; nothing is linked, so no NDK
+      # or Xcode is needed.
+      - name: clippy for each target
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          for t in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android aarch64-apple-ios aarch64-apple-ios-sim; do
+            echo "::group::$t"
+            cargo clippy -p gase-mobile --target "$t"
+            echo "::endgroup::"
+          done
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: Android SDK packages (NDK, platform, build tools)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Build the debug APK (SDL2 from source, Rust for three ABIs)
+        run: gradle -p mobile/android assembleDebug --stacktrace
+      - name: Check the APK
+        run: |
+          apk=mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          ls -l "$apk"
+          unzip -l "$apk" | grep 'lib/'
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            for lib in libSDL2.so libmain.so; do
+              unzip -l "$apk" | grep -q "lib/$abi/$lib" || { echo "missing lib/$abi/$lib"; exit 1; }
+            done
+          done
+          # The entry point SDL's Java side looks up with dlsym.
+          unzip -o -q "$apk" lib/arm64-v8a/libmain.so -d /tmp/apk
+          nm="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$nm" -D --defined-only /tmp/apk/lib/arm64-v8a/libmain.so | grep -w SDL_main
+          # 16 KB page alignment (Android 15+ devices).
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$apk" | tail -n 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gase-android-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
+  ios:
+    name: iOS app (simulator and device, unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+      - name: XcodeGen
+        run: brew install xcodegen
+      - name: Build SDL2, the Rust library and gase.app
+        run: mobile/ios/build.sh
+      - name: Check the apps
+        run: |
+          for app in mobile/build/ios/app/Release-*/gase.app; do
+            echo "== $app"
+            ls -l "$app"
+            plutil -lint "$app/Info.plist"
+            nm "$app/gase" | grep -E ' T _(SDL_main|gase_ios_pick_rom)$'
+            lipo -info "$app/gase"
+          done
+      - name: Package
+        run: |
+          cd mobile/build/ios/app
+          ditto -c -k --keepParent Release-iphonesimulator/gase.app gase-ios-simulator.zip
+          ditto -c -k --keepParent Release-iphoneos/gase.app gase-ios-device-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gase-ios-apps
+          path: mobile/build/ios/app/*.zip
