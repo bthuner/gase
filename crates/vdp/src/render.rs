@@ -19,20 +19,25 @@ use crate::{MAX_WIDTH, Vdp};
 
 const PRIORITY: u8 = 0x80;
 
+/// A line of layer pixels, with 8 bytes of slack past the widest line so
+/// that the plane renderer can always store a whole tile row (see
+/// [`Vdp::render_plane`]).
+type LineBuffer = [u8; MAX_WIDTH + 8];
+
 /// Line buffers reused from line to line to avoid allocations.
 #[derive(Clone, Debug)]
 pub(crate) struct Scratch {
-    plane_a: [u8; MAX_WIDTH],
-    plane_b: [u8; MAX_WIDTH],
-    sprites: [u8; MAX_WIDTH],
+    plane_a: LineBuffer,
+    plane_b: LineBuffer,
+    sprites: LineBuffer,
 }
 
 impl Default for Scratch {
     fn default() -> Self {
         Self {
-            plane_a: [0; MAX_WIDTH],
-            plane_b: [0; MAX_WIDTH],
-            sprites: [0; MAX_WIDTH],
+            plane_a: [0; MAX_WIDTH + 8],
+            plane_b: [0; MAX_WIDTH + 8],
+            sprites: [0; MAX_WIDTH + 8],
         }
     }
 }
@@ -56,14 +61,42 @@ struct LineInfo {
 }
 
 #[inline]
-fn opaque(pixel: u8) -> bool {
+const fn opaque(pixel: u8) -> bool {
     pixel & 0x0F != 0
 }
 
 #[inline]
-fn high(pixel: u8) -> bool {
+const fn high(pixel: u8) -> bool {
     pixel & PRIORITY != 0
 }
+
+/// Priority as a number: the *score* of each layer pixel, one table per
+/// layer (sprite, plane A, plane B), indexed by the layer pixel.
+///
+/// The standard priority order is: high sprite, high A, high B, low sprite,
+/// low A, low B, backdrop. Giving each of those a rank (6 down to 1) in bits
+/// 8-10, above the pixel's colour in bits 0-5, turns "the first opaque layer
+/// in this order" into "the largest score": the compositor takes the
+/// maximum of three table lookups and the backdrop (rank 0), with no
+/// branches. Transparent pixels score 0 so they never win. [`Vdp::pick`] is
+/// the readable definition; a unit test checks they agree.
+const SCORES: [[u16; 256]; 3] = {
+    let mut tables = [[0; 256]; 3];
+    let mut layer = 0;
+    while layer < 3 {
+        let mut pixel = 0;
+        while pixel < 256 {
+            let p = pixel as u8;
+            if opaque(p) {
+                let rank = if high(p) { 6 - layer } else { 3 - layer };
+                tables[layer][pixel] = (rank as u16) << 8 | (p & 0x3F) as u16;
+            }
+            pixel += 1;
+        }
+        layer += 1;
+    }
+    tables
+};
 
 impl Vdp {
     pub(crate) fn render_line(&mut self, line: u16) {
@@ -104,16 +137,21 @@ impl Vdp {
         self.render_window(&mut scratch.plane_a, line, info);
         self.render_sprites(&mut scratch.sprites, info);
 
-        let shadow_highlight = self.regs[12] & 0x08 != 0;
         let palette = &self.palette;
         let out = &mut self.frame[row * MAX_WIDTH..row * MAX_WIDTH + width];
-        for (x, pixel) in out.iter_mut().enumerate() {
-            let (a, b, s) = (scratch.plane_a[x], scratch.plane_b[x], scratch.sprites[x]);
-            *pixel = if shadow_highlight {
-                Self::composite_shadow_highlight(palette, a, b, s, backdrop)
-            } else {
-                palette.get(Self::pick(a, b, s, backdrop), Intensity::Normal)
-            };
+        let layers = scratch
+            .plane_a
+            .iter()
+            .zip(&scratch.plane_b)
+            .zip(&scratch.sprites);
+        if self.regs[12] & 0x08 != 0 {
+            for (pixel, ((&a, &b), &s)) in out.iter_mut().zip(layers) {
+                *pixel = Self::composite_shadow_highlight(palette, a, b, s, backdrop);
+            }
+        } else {
+            for (pixel, ((&a, &b), &s)) in out.iter_mut().zip(layers) {
+                *pixel = palette.get(Self::pick_fast(a, b, s, backdrop), Intensity::Normal);
+            }
         }
 
         // Register 0 bit 5 blanks the leftmost 8 pixels (hides the column
@@ -127,19 +165,34 @@ impl Vdp {
     /// Standard priority: high sprite, high A, high B, low sprite, low A,
     /// low B, backdrop.
     #[inline]
-    fn pick(a: u8, b: u8, s: u8, backdrop: u8) -> u8 {
+    const fn pick(a: u8, b: u8, s: u8, backdrop: u8) -> u8 {
         let layers = [s, a, b];
-        for &pixel in &layers {
-            if opaque(pixel) && high(pixel) {
-                return pixel & 0x3F;
+        let mut i = 0;
+        while i < layers.len() {
+            if opaque(layers[i]) && high(layers[i]) {
+                return layers[i] & 0x3F;
             }
+            i += 1;
         }
-        for &pixel in &layers {
-            if opaque(pixel) {
-                return pixel & 0x3F;
+        let mut i = 0;
+        while i < layers.len() {
+            if opaque(layers[i]) {
+                return layers[i] & 0x3F;
             }
+            i += 1;
         }
         backdrop
+    }
+
+    /// [`Self::pick`] for the per-pixel hot loop, using [`SCORES`].
+    #[inline]
+    fn pick_fast(a: u8, b: u8, s: u8, backdrop: u8) -> u8 {
+        let [sprite, plane_a, plane_b] = &SCORES;
+        let score = sprite[usize::from(s)]
+            .max(plane_a[usize::from(a)])
+            .max(plane_b[usize::from(b)])
+            .max(u16::from(backdrop));
+        (score & 0x3F) as u8
     }
 
     /// Shadow/highlight mode.
@@ -193,7 +246,7 @@ impl Vdp {
         (cells(self.regs[16]), cells(self.regs[16] >> 4))
     }
 
-    fn render_plane(&self, out: &mut [u8; MAX_WIDTH], plane: Plane, info: LineInfo) {
+    fn render_plane(&self, out: &mut LineBuffer, plane: Plane, info: LineInfo) {
         let (name_table, scroll_index) = match plane {
             Plane::A => (u32::from(self.regs[2] & 0x38) << 10, 0),
             Plane::B => (u32::from(self.regs[4] & 0x07) << 13, 1),
@@ -229,23 +282,40 @@ impl Vdp {
             u32::from(self.vsram[index]) & vscroll_mask
         };
 
-        let mut cached_key = u32::MAX;
-        let mut pattern: u32 = 0;
-        let mut attributes: u16 = 0;
-        for (x, pixel) in out.iter_mut().take(info.width).enumerate() {
+        // Walk the line in *runs*: stretches of screen pixels that come from
+        // the same row of the same tile. A run ends at the tile's right edge
+        // and, with per-column vertical scroll, at the edge of each 16-pixel
+        // column (whose vscroll may pick another row). Looking up the name
+        // table and the pattern once per run instead of once per pixel is
+        // what makes this loop cheap; the plane wraps on whole cells, so
+        // wrapping never splits a run.
+        let mut x = 0;
+        while x < info.width {
             let column = x / 16;
             let px = (x as u32).wrapping_sub(hscroll) & width_mask;
             let py = (info.y + vscroll_for(column)) & height_mask;
+            let fine = (px & 7) as usize;
+            let column_end = if per_column {
+                (column + 1) * 16
+            } else {
+                info.width
+            };
+            let run = (8 - fine).min(column_end.min(info.width) - x);
+
             let cell_x = px >> 3;
-            let key = (py << 8) | cell_x;
-            if key != cached_key {
-                cached_key = key;
-                let cell_y = py / info.tile_height;
-                let entry_addr = name_table + (cell_y * width_cells + cell_x) * 2;
-                attributes = self.vram_word((entry_addr & 0xFFFF) as u16);
-                pattern = self.tile_row(attributes, py % info.tile_height, info);
-            }
-            *pixel = Self::tile_pixel(attributes, pattern, px & 7);
+            let cell_y = py / info.tile_height;
+            let entry_addr = name_table + (cell_y * width_cells + cell_x) * 2;
+            let attributes = self.vram_word((entry_addr & 0xFFFF) as u16);
+            let pattern = self.tile_row(attributes, py % info.tile_height, info);
+            // Shift out the `fine` pixels left of the screen and store all 8
+            // bytes in one go. Past the run's end they are leftovers (zeros
+            // or pixels of a column the run stopped at), which the next run
+            // overwrites, or which land in the buffer's slack at the end of
+            // the line. A fixed-size store is much cheaper than a copy of
+            // 1 to 8 bytes.
+            let pixels = Self::decode_row(attributes, pattern) << (fine * 8);
+            out[x..x + 8].copy_from_slice(&pixels.to_be_bytes());
+            x += run;
         }
     }
 
@@ -268,18 +338,30 @@ impl Vdp {
         ])
     }
 
-    /// Extract pixel `x` (0-7) of a tile row as a layer pixel.
+    /// Turn a tile row into its 8 layer pixels, honouring horizontal flip,
+    /// packed in a `u64` with the leftmost pixel in the top byte.
     #[inline]
-    fn tile_pixel(attributes: u16, pattern: u32, x: u32) -> u8 {
-        let x = if attributes & 0x0800 != 0 { 7 - x } else { x };
-        let colour = ((pattern >> (28 - x * 4)) & 0xF) as u8;
-        let palette = ((attributes >> 9) & 0x30) as u8;
-        let priority = ((attributes >> 8) & 0x80) as u8;
-        priority | palette | colour
+    fn decode_row(attributes: u16, pattern: u32) -> u64 {
+        // Spread the eight 4-bit colours into eight bytes: move the top
+        // half of each group (32, 16, then 8 bits) up into the next free
+        // space, halving the group size each step.
+        let mut row = u64::from(pattern);
+        row = (row | row << 16) & 0x0000_FFFF_0000_FFFF;
+        row = (row | row << 8) & 0x00FF_00FF_00FF_00FF;
+        row = (row | row << 4) & 0x0F0F_0F0F_0F0F_0F0F;
+        // Priority and palette are the same for the whole row: add them to
+        // every byte at once.
+        let priority = (attributes >> 8) & 0x80;
+        let palette = (attributes >> 9) & 0x30;
+        row |= u64::from(priority | palette) * 0x0101_0101_0101_0101;
+        if attributes & 0x0800 != 0 {
+            row = row.swap_bytes();
+        }
+        row
     }
 
     /// Overwrite plane A with the window where the window is active.
-    fn render_window(&self, out: &mut [u8; MAX_WIDTH], line: u16, info: LineInfo) {
+    fn render_window(&self, out: &mut LineBuffer, line: u16, info: LineInfo) {
         // Vertical extent: register 18 = D00P PPPP, window is the area above
         // (D=0) or below (D=1) line P*8.
         let v_pos = u16::from(self.regs[18] & 0x1F) * 8;
@@ -312,9 +394,8 @@ impl Vdp {
             let entry_addr = name_table + (cell_y * width_cells + cell_x) * 2;
             let attributes = self.vram_word((entry_addr & 0xFFFF) as u16);
             let pattern = self.tile_row(attributes, y % info.tile_height, info);
-            for (x, pixel) in chunk.iter_mut().enumerate() {
-                *pixel = Self::tile_pixel(attributes, pattern, x as u32);
-            }
+            let pixels = Self::decode_row(attributes, pattern).to_be_bytes();
+            chunk.copy_from_slice(&pixels[..chunk.len()]);
         }
     }
 
@@ -334,7 +415,7 @@ impl Vdp {
     /// hardware limits how much it can draw: 20 sprites and 320 pixels per
     /// line in H40 (16 and 256 in H32); beyond that the "overflow" status
     /// flag is set and further sprites are dropped.
-    fn render_sprites(&mut self, out: &mut [u8; MAX_WIDTH], info: LineInfo) {
+    fn render_sprites(&mut self, out: &mut LineBuffer, info: LineInfo) {
         out[..info.width].fill(0);
         let h40 = self.h40();
         let (max_sprites, max_per_line, max_pixels) =
@@ -413,16 +494,16 @@ impl Vdp {
                     cell
                 };
                 let tile = base_tile + column * height_cells + row / info.tile_height;
-                // Build a pseudo name-table entry so tile_row/tile_pixel can be
+                // Build a pseudo name-table entry so tile_row/decode_row can be
                 // shared with the planes (flip handled by row above).
                 let fake = (attributes & 0xF800 & !0x1000) | (tile as u16 & 0x7FF);
                 let pattern = self.tile_row(fake, row % info.tile_height, info);
-                for x in 0..8u32 {
-                    let sx = x0 + (cell * 8 + x) as i32;
+                let pixels = Self::decode_row(fake, pattern).to_be_bytes();
+                for (x, &pixel) in pixels.iter().enumerate() {
+                    let sx = x0 + (cell * 8) as i32 + x as i32;
                     if sx < 0 || sx as usize >= info.width {
                         continue;
                     }
-                    let pixel = Self::tile_pixel(fake, pattern, x);
                     if !opaque(pixel) {
                         continue;
                     }
@@ -470,6 +551,37 @@ mod tests {
 
     fn pixel(vdp: &Vdp, x: usize, y: usize) -> u32 {
         vdp.frame()[y * MAX_WIDTH + x]
+    }
+
+    #[test]
+    fn pick_table_matches_pick() {
+        // Every class (transparent/opaque x low/high) with several palettes
+        // and colours, against every possible plane B pixel.
+        let samples = [0x00, 0x80, 0x30, 0xB0, 0x05, 0x85, 0x3F, 0xBF, 0x1E, 0x9E];
+        for a in samples {
+            for s in samples {
+                for b in 0..=255 {
+                    for backdrop in [0x00, 0x21, 0x3F] {
+                        let fast = Vdp::pick_fast(a, b, s, backdrop);
+                        assert_eq!(fast, Vdp::pick(a, b, s, backdrop));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decode_row_matches_pixel_by_pixel() {
+        let pattern = 0x1234_ABCF;
+        for attributes in [0x0000, 0x8000, 0x6000, 0x0800, 0xE800] {
+            let pixels = Vdp::decode_row(attributes, pattern).to_be_bytes();
+            for (x, &pixel) in pixels.iter().enumerate() {
+                let x = if attributes & 0x0800 != 0 { 7 - x } else { x };
+                let colour = (pattern >> (28 - x * 4)) as u8 & 0xF;
+                let high = ((attributes >> 8) & 0x80 | (attributes >> 9) & 0x30) as u8;
+                assert_eq!(pixel, high | colour);
+            }
+        }
     }
 
     #[test]
