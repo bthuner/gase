@@ -4,6 +4,7 @@
 #   gase-<version>-windows-x86_64.zip     desktop, SDL2 linked in
 #   gase-<version>-macos-universal.tar.gz desktop, Apple silicon + Intel
 #   gase-<version>-web.zip                the browser version: serve over HTTP
+#                                         (web and phones: from 0.2.0 on)
 #   gase-<version>-android.apk            debug-signed, for sideloading
 #   gase-<version>-ios-unsigned.ipa       must be signed before installing
 #   SHA256SUMS.txt
@@ -54,6 +55,8 @@ jobs:
       ref: ${{ steps.plan.outputs.ref }}
       tag: ${{ steps.plan.outputs.tag }}
       name: ${{ steps.plan.outputs.name }}
+      has_web: ${{ steps.parts.outputs.has_web }}
+      has_mobile: ${{ steps.parts.outputs.has_mobile }}
     steps:
       - id: plan
         env:
@@ -82,6 +85,18 @@ jobs:
           [ -n "$tag" ] || name="gase-dev"
           { echo "ref=$ref"; echo "tag=$tag"; echo "name=$name"; } >> "$GITHUB_OUTPUT"
           echo "Building **$ref** as \`$name\`${tag:+ for release $tag}" >> "$GITHUB_STEP_SUMMARY"
+      # Older versions have fewer platforms (0.1.0 is desktop only): build
+      # whatever the commit being released contains.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.plan.outputs.ref }}
+      - id: parts
+        run: |
+          has_web=false; has_mobile=false
+          [ -x web/build.sh ] && has_web=true
+          [ -d mobile ] && has_mobile=true
+          { echo "has_web=$has_web"; echo "has_mobile=$has_mobile"; } >> "$GITHUB_OUTPUT"
+          echo "Web: $has_web, phones: $has_mobile" >> "$GITHUB_STEP_SUMMARY"
 
   desktop:
     name: Desktop (${{ matrix.os }})
@@ -172,7 +187,19 @@ jobs:
           esac
       - name: Smoke-run the window (Linux, dummy drivers)
         if: matrix.os == 'linux'
-        run: scripts/smoke-sdl.sh target/release/gase
+        # Every version can run a game, so the check that works for all of
+        # them is a tiny hand-made ROM: reset vectors (stack, entry point
+        # $200) and, at $200, BRA.S to itself. The window must still be
+        # open after five seconds. Newer versions also have the full
+        # smoke test (home screen included).
+        run: |
+          python3 -c "import sys; rom = bytearray(1024); rom[0:8] = bytes.fromhex('00fffe0000000200'); rom[0x100:0x104] = b'SEGA'; rom[0x200:0x202] = bytes.fromhex('60fe'); open(sys.argv[1], 'wb').write(rom)" spin.bin
+          set +e
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 5 target/release/gase spin.bin
+          rc=$?
+          set -e
+          [ "$rc" -eq 124 ] || { echo "the window closed early (status $rc)"; exit 1; }
+          if [ -x scripts/smoke-sdl.sh ]; then scripts/smoke-sdl.sh target/release/gase; fi
       - name: Package
         shell: bash
         env:
@@ -201,6 +228,7 @@ jobs:
   web:
     name: Web
     needs: plan
+    if: needs.plan.outputs.has_web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +256,7 @@ jobs:
   mobile:
     name: Phones
     needs: plan
+    if: needs.plan.outputs.has_mobile == 'true'
     uses: ./.github/workflows/mobile.yml
     with:
       ref: ${{ needs.plan.outputs.ref }}
@@ -235,6 +264,8 @@ jobs:
   publish:
     name: Attach to the release
     needs: [plan, desktop, web, mobile]
+    # Skipped web or phone jobs (older versions) are fine; failures are not.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -253,14 +284,19 @@ jobs:
       - name: Collect and rename the files
         run: |
           mkdir dist
-          mv artifacts/release-desktop-*/* artifacts/release-web/* dist/
-          cp artifacts/gase-android-debug-apk/app-debug.apk "dist/$NAME-android.apk"
-          # An .ipa is a zip with the app under Payload/. Unsigned: it must
-          # be signed (Xcode, AltStore, Sideloadly...) before an iPhone
-          # accepts it.
-          mkdir -p ipa/Payload
-          unzip -q artifacts/gase-ios-apps/gase-ios-device-unsigned.zip -d ipa/Payload
-          (cd ipa && zip -qry "../dist/$NAME-ios-unsigned.ipa" Payload)
+          mv artifacts/release-desktop-*/* dist/
+          if [ -d artifacts/release-web ]; then mv artifacts/release-web/* dist/; fi
+          if [ -d artifacts/gase-android-debug-apk ]; then
+            cp artifacts/gase-android-debug-apk/app-debug.apk "dist/$NAME-android.apk"
+          fi
+          if [ -d artifacts/gase-ios-apps ]; then
+            # An .ipa is a zip with the app under Payload/. Unsigned: it
+            # must be signed (Xcode, AltStore, Sideloadly...) before an
+            # iPhone accepts it.
+            mkdir -p ipa/Payload
+            unzip -q artifacts/gase-ios-apps/gase-ios-device-unsigned.zip -d ipa/Payload
+            (cd ipa && zip -qry "../dist/$NAME-ios-unsigned.ipa" Payload)
+          fi
           (cd dist && sha256sum -- * > SHA256SUMS.txt)
           ls -l dist
           cat dist/SHA256SUMS.txt
@@ -272,21 +308,23 @@ jobs:
             /^## \[/ { if (on) exit; on = index($0, "## [" v "]") == 1; next }
             /^\[[^]]*\]: / { if (on) exit }
             on' CHANGELOG.md > notes.md
-          cat >> notes.md <<'EOF'
-
-          ### Downloads
-          | File | For |
-          |---|---|
-          | `*-linux-x86_64.tar.gz` | Linux (x86-64, glibc 2.35+). Run `./gase`; SDL2 is built in. |
-          | `*-windows-x86_64.zip` | Windows 10/11 (x86-64). Run `gase.exe`. |
-          | `*-macos-universal.tar.gz` | macOS 11+ on Apple silicon and Intel. Not notarised: run `xattr -d com.apple.quarantine gase` once. |
-          | `*-web.zip` | The browser version: serve the folder over HTTP (`python3 -m http.server`). |
-          | `*-android.apk` | Android 5+, signed with a debug key: allow installs from this source. |
-          | `*-ios-unsigned.ipa` | iOS: sign it first (e.g. AltStore, Sideloadly, or Xcode). |
-          | `SHA256SUMS.txt` | Checksums of the files above. |
-
-          The source code is attached by GitHub below. Desktop builds include SDL2 (zlib licence).
-          EOF
+          # A downloads table with a row for each file this version has.
+          row() { if compgen -G "dist/$1" > /dev/null; then echo "| \`$1\` | $2 |"; fi; }
+          {
+            echo
+            echo "### Downloads"
+            echo "| File | For |"
+            echo "|---|---|"
+            row "*-linux-x86_64.tar.gz" "Linux (x86-64, glibc 2.35+). Run \`./gase\`; SDL2 is built in."
+            row "*-windows-x86_64.zip" "Windows 10/11 (x86-64). Run \`gase.exe\`."
+            row "*-macos-universal.tar.gz" "macOS 11+ on Apple silicon and Intel. Not notarised: run \`xattr -d com.apple.quarantine gase\` once."
+            row "*-web.zip" "The browser version: serve the folder over HTTP (\`python3 -m http.server\`)."
+            row "*-android.apk" "Android 5+, signed with a debug key: allow installs from this source."
+            row "*-ios-unsigned.ipa" "iOS: sign it first (e.g. AltStore, Sideloadly, or Xcode)."
+            row "SHA256SUMS.txt" "Checksums of the files above."
+            echo
+            echo "The source code is attached by GitHub below. Desktop builds include SDL2 (zlib licence)."
+          } >> notes.md
           cat notes.md
       - name: Dry run (pull request)
         if: env.TAG == ''
