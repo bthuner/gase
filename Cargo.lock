@@ -31,6 +31,7 @@ dependencies = [
  "gase-sound",
  "gase-vdp",
  "gase-z80",
+ "gase-zip",
 ]
 
 [[package]]
@@ -64,6 +65,10 @@ version = "0.1.0"
 dependencies = [
  "gase-savestate",
 ]
+
+[[package]]
+name = "gase-zip"
+version = "0.1.0"
 
 [[package]]
 name = "lazy_static"
