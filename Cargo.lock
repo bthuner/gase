@@ -18,8 +18,16 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 name = "gase"
 version = "0.1.0"
 dependencies = [
+ "gase-app",
  "gase-core",
  "sdl2",
+]
+
+[[package]]
+name = "gase-app"
+version = "0.1.0"
+dependencies = [
+ "gase-core",
 ]
 
 [[package]]
@@ -31,6 +39,7 @@ dependencies = [
  "gase-sound",
  "gase-vdp",
  "gase-z80",
+ "gase-zip",
 ]
 
 [[package]]
@@ -64,6 +73,10 @@ version = "0.1.0"
 dependencies = [
  "gase-savestate",
 ]
+
+[[package]]
+name = "gase-zip"
+version = "0.1.0"
 
 [[package]]
 name = "lazy_static"

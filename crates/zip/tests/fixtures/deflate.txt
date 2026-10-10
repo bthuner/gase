@@ -1,0 +1,20 @@
+# name size crc32 (of the decompressed data)
+corpus.level0.deflate 8192 4fb2b8a0
+corpus.level1.deflate 8192 4fb2b8a0
+corpus.level6.deflate 8192 4fb2b8a0
+corpus.level9.deflate 8192 4fb2b8a0
+corpus.fixed.deflate 8192 4fb2b8a0
+corpus.huffman_only.deflate 8192 4fb2b8a0
+corpus.rle.deflate 8192 4fb2b8a0
+long_distance.level1.deflate 32768 20a1c77d
+long_distance.level6.deflate 32768 20a1c77d
+long_distance.level9.deflate 32768 20a1c77d
+long_distance.fixed.deflate 32768 20a1c77d
+long_distance.rle.deflate 32768 20a1c77d
+empty.level0.deflate 0 00000000
+empty.level1.deflate 0 00000000
+empty.level6.deflate 0 00000000
+empty.level9.deflate 0 00000000
+empty.fixed.deflate 0 00000000
+empty.huffman_only.deflate 0 00000000
+empty.rle.deflate 0 00000000
