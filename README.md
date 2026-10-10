@@ -29,6 +29,11 @@ cargo build --release
 ./target/release/gase path/to/game.bin
 ```
 
+The **Android and iOS apps** run the same SDL2 shell; see
+[`mobile/README.md`](mobile/README.md) for how to build them (Android SDK +
+NDK, or a Mac with Xcode) and how a Rust program becomes a phone app.
+`gase --mobile --ui-size 540x1170` tries the phone app's shell on a desktop.
+
 Without SDL2, build the dependency-free headless runner:
 
 ```sh
@@ -149,7 +154,13 @@ crates/
   core/       the console: memory maps, cartridge, controllers, scheduler
   app/        the user interface for every platform: menus, settings, input
               mapping, touch controls, drawn in software (no dependencies)
-  gase/       the desktop binary: an SDL2 shell around app/, or headless
+  gase/       the SDL2 shell around app/ (desktop and phones, a library) and
+              the desktop binary, or headless
+  mobile/     the native entry point of the Android and iOS apps (SDL_main)
+mobile/
+  android/    the Android app: Gradle project, GaseActivity.java
+  ios/        the iOS app: XcodeGen project, Objective-C app delegate
+  README.md   building and installing the phone apps
 docs/
   VIABILITY.md     why Rust, effort and risk analysis
   ARCHITECTURE.md  how the pieces fit together — start here to learn
