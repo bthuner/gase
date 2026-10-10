@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>gase</title>
+<meta name="description" content="gase, a Sega Mega Drive / Genesis emulator written in Rust, running in your browser as WebAssembly.">
+<meta name="theme-color" content="#0d0c0b">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="gase">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="gase.css">
+<link rel="modulepreload" href="gase.js">
+<link rel="preload" href="gase_web.wasm" as="fetch" type="application/wasm" crossorigin>
+</head>
+<body>
+<main id="stage" aria-label="Emulator screen">
+  <canvas id="game" hidden></canvas>
+  <canvas id="overlay" hidden></canvas>
+  <div id="splash">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="6" width="20" height="4" fill="#f0473b"/><rect x="6" y="14" width="20" height="4" fill="#dcae45"/><rect x="6" y="22" width="12" height="4" fill="#ede6d9"/></svg>
+    <h1>gase</h1>
+    <p id="status">Loading…</p>
+    <noscript><p>gase needs JavaScript and WebAssembly to run.</p></noscript>
+  </div>
+  <div id="stats" hidden></div>
+  <div id="message" role="status" hidden></div>
+</main>
+<footer id="chrome">
+  <p class="about">
+    <strong>gase</strong> is a Mega Drive emulator written in Rust, running here as WebAssembly.
+    Your games, saves and settings stay in this browser.
+    <a href="https://github.com/bthuner/gase">Source</a>
+  </p>
+  <p class="try">
+    <span>No game at hand?</span>
+    <button id="test-rom" type="button">Play the 240p Test Suite</button>
+    <small>by Artemio Urbina, GPL-2.0-or-later, downloaded from GitHub when you click</small>
+  </p>
+</footer>
+<div id="drop" hidden><p>Drop a ROM to play it</p></div>
+<input id="file" type="file" accept=".md,.bin,.gen,.smd,.zip" hidden>
+<script type="module" src="gase.js"></script>
+<script>
+  // Offline use and "Add to Home Screen": cache the page (sw.js).
+  if ('serviceWorker' in navigator && location.protocol !== 'file:' && !location.search.includes('nosw')) {
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>

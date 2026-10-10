@@ -1,0 +1,39 @@
+[package]
+name = "gase-web"
+description = "The gase web shell: gase-app compiled to WebAssembly, with a plain-JavaScript page around it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# `cdylib` is the `.wasm` file the page loads; `rlib` lets `cargo test` run
+# the shell's logic natively (everything except the few lines that talk to
+# JavaScript, see `src/abi.rs`).
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Like every other crate: no dependencies outside the workspace. No
+# wasm-bindgen, no web-sys: the boundary to JavaScript is a handful of
+# plain `extern "C"` functions, written by hand and explained in `abi.rs`.
+[dependencies]
+gase-core.workspace = true
+gase-app.workspace = true
+
+# The workspace lints, except that `unsafe_code` is `deny` instead of
+# `forbid`: exporting a function to JavaScript under a fixed name needs
+# `#[unsafe(no_mangle)]`, and importing one needs an `unsafe extern` block,
+# both of which the lint counts as unsafe code. `src/abi.rs` is the one
+# module allowed to use them (it contains no `unsafe { }` block); `forbid`
+# could not be lifted for that module alone.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+too_many_lines = "allow"
+module_name_repetitions = "allow"
