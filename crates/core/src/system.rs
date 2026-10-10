@@ -93,7 +93,12 @@ impl From<gase_savestate::Error> for StateError {
 }
 
 const STATE_MAGIC: &[u8; 4] = b"GASE";
-const STATE_VERSION: u32 = 1;
+/// Bumped whenever the layout changes.
+///
+/// * 1: first version.
+/// * 2: serial EEPROM state, after the SRAM contents (EEPROM games used to
+///   be treated as having SRAM).
+const STATE_VERSION: u32 = 2;
 
 /// A borrowed view of the last rendered frame.
 #[derive(Clone, Copy, Debug)]
@@ -241,7 +246,7 @@ impl Genesis {
         &self.hw.cart
     }
 
-    /// Mutable access to the cartridge (to load or save its SRAM).
+    /// Mutable access to the cartridge (to load or save its save memory).
     pub fn cartridge_mut(&mut self) -> &mut Cartridge {
         &mut self.hw.cart
     }
@@ -444,6 +449,9 @@ impl Genesis {
         if let Some(sram) = &self.hw.cart.sram {
             sram.data.save(&mut w);
         }
+        if let Some(eeprom) = &self.hw.cart.eeprom {
+            eeprom.chip.save(&mut w);
+        }
         self.m68k_clock.save(&mut w);
         self.z80_clock.save(&mut w);
         self.next_line.save(&mut w);
@@ -489,6 +497,9 @@ impl Genesis {
         next.hw.cart.banks.load(&mut r)?;
         if let Some(sram) = &mut next.hw.cart.sram {
             sram.data.load(&mut r)?;
+        }
+        if let Some(eeprom) = &mut next.hw.cart.eeprom {
+            eeprom.chip.load(&mut r)?;
         }
         next.m68k_clock.load(&mut r)?;
         next.z80_clock.load(&mut r)?;

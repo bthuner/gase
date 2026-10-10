@@ -11,7 +11,7 @@ to be fast, compatible and pleasant to use.
 |---|---|
 | Pedagogy | One crate per chip, module docs that teach the hardware, comments that explain *why* |
 | Performance | Pre-decoded/static-dispatch CPU cores, scanline renderer, lazy audio catch-up |
-| Compatibility | CPU cores validated against ~2.6 million test vectors, SRAM, SSF2 mapper, 6-button pads, PAL/NTSC |
+| Compatibility | CPU cores validated against ~2.6 million test vectors, SRAM and serial EEPROM saves, SSF2 mapper, 6-button pads, PAL/NTSC |
 | Quality of life | Save states, rewind, fast-forward, screenshots, gamepads, dynamic audio rate control |
 | Best practices | `forbid(unsafe_code)`, clippy-clean, CI, one external dependency (SDL2, optional) |
 
@@ -52,7 +52,8 @@ gase emulates the 68000 exactly, including *address errors*: a word access
 at an odd address crashes the game, as on real hardware. A few homebrew
 programs contain such bugs and only work in emulators that ignore them; run
 those with `--no-address-errors`.
-Battery saves (`game.srm`), save states (`game.state0`..`9`) and screenshots
+
+Game saves (`game.srm`, battery SRAM or EEPROM), save states (`game.state0`..`9`) and screenshots
 are stored next to the ROM. Run `gase --help` for all options.
 
 ## Layout

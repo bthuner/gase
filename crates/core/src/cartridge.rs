@@ -20,6 +20,13 @@
 //! of `0x200000-0x20FFFF`. Cartridges bigger than 2 MiB overlap that range
 //! with ROM, so they switch between ROM and SRAM by writing `0xA130F1`.
 //!
+//! # Serial EEPROM
+//!
+//! A few dozen games save to a small I²C EEPROM instead, bit-banged
+//! through one or two cartridge addresses; see [`crate::eeprom`]. To a
+//! frontend both kinds are just "save data" ([`Cartridge::save_data`]),
+//! stored in the same `.srm` file.
+//!
 //! # Mappers
 //!
 //! The 68000 sees at most 4 MiB of cartridge. Super Street Fighter II (5 MiB)
@@ -28,6 +35,8 @@
 
 use std::fmt;
 use std::sync::Arc;
+
+use crate::eeprom::{self, ChipType, SerialEeprom};
 
 /// Which consoles a cartridge says it supports.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,6 +115,36 @@ impl Sram {
     }
 }
 
+/// What kind of save memory a cartridge has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveType {
+    /// No save memory.
+    None,
+    /// Battery-backed SRAM of this many bytes.
+    Sram(usize),
+    /// A serial EEPROM.
+    Eeprom(ChipType),
+}
+
+impl fmt::Display for SaveType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn size(bytes: usize) -> String {
+            if bytes >= 1024 && bytes % 1024 == 0 {
+                format!("{} KiB", bytes / 1024)
+            } else {
+                format!("{bytes} bytes")
+            }
+        }
+        match self {
+            SaveType::None => f.write_str("no save memory"),
+            SaveType::Sram(bytes) => write!(f, "battery save ({} SRAM)", size(*bytes)),
+            SaveType::Eeprom(chip) => {
+                write!(f, "EEPROM save ({} {})", size(chip.size()), chip.name())
+            }
+        }
+    }
+}
+
 /// A loaded cartridge.
 #[derive(Clone)]
 pub struct Cartridge {
@@ -120,6 +159,11 @@ pub struct Cartridge {
     has_mapper: bool,
     /// Current 512 KiB page for each of the eight slots.
     pub banks: [u8; 8],
+    /// Serial EEPROM, for the games that have one (instead of SRAM).
+    pub eeprom: Option<SerialEeprom>,
+    /// Byte address the EEPROM's SDA is read from, or `u32::MAX`. Cached
+    /// outside the `Option` so the hot ROM read path pays one compare.
+    eeprom_read: u32,
 }
 
 impl fmt::Debug for Cartridge {
@@ -130,6 +174,10 @@ impl fmt::Debug for Cartridge {
             .field(
                 "sram",
                 &self.sram.as_ref().map(|s| (s.start, s.end, s.data.len())),
+            )
+            .field(
+                "eeprom",
+                &self.eeprom.as_ref().map(|e| (e.chip.chip(), e.wiring.name)),
             )
             .finish_non_exhaustive()
     }
@@ -209,9 +257,17 @@ impl Cartridge {
             regions: parse_regions(&region_text),
         };
 
-        let sram = Self::detect_sram(&rom);
+        // An EEPROM game's "RA" header (if any) describes the EEPROM, not SRAM.
+        let eeprom = Self::detect_eeprom(&rom, &header);
+        let sram = if eeprom.is_some() {
+            None
+        } else {
+            Self::detect_sram(&rom)
+        };
         let has_mapper = rom.len() > 0x40_0000 || header.system.starts_with("SEGA SSF");
         Ok(Self {
+            eeprom_read: eeprom.as_ref().map_or(u32::MAX, |e| e.wiring.sda_out.addr),
+            eeprom,
             // Cartridges smaller than 2 MiB with SRAM keep it permanently
             // mapped; bigger ones start with ROM visible.
             sram_enabled: sram.is_some() && rom.len() <= 0x20_0000,
@@ -221,6 +277,14 @@ impl Cartridge {
             has_mapper,
             banks: [0, 1, 2, 3, 4, 5, 6, 7],
         })
+    }
+
+    fn detect_eeprom(rom: &[u8], header: &Header) -> Option<SerialEeprom> {
+        let board = eeprom::boards::find(&header.serial, header.checksum).or_else(|| {
+            // Backup RAM type 0xE840 is Sega's code for a serial EEPROM.
+            (rom[0x1B0..0x1B4] == *b"RA\xE8\x40").then_some(&eeprom::boards::GENERIC)
+        })?;
+        Some(SerialEeprom::new(board.chip, board.wiring))
     }
 
     fn detect_sram(rom: &[u8]) -> Option<Sram> {
@@ -293,6 +357,9 @@ impl Cartridge {
     #[inline]
     #[must_use]
     pub fn read_byte(&self, addr: u32) -> u8 {
+        if addr == self.eeprom_read {
+            return self.eeprom.as_ref().map_or(0xFF, SerialEeprom::read_sda);
+        }
         if let Some(i) = self.sram_offset(addr) {
             return self.sram.as_ref().map_or(0xFF, |s| s.data[i]);
         }
@@ -308,7 +375,7 @@ impl Cartridge {
     #[inline]
     #[must_use]
     pub fn read_word(&self, addr: u32) -> u16 {
-        if self.sram_enabled && self.sram.is_some() {
+        if (self.sram_enabled && self.sram.is_some()) || addr & !1 == self.eeprom_read & !1 {
             return u16::from_be_bytes([self.read_byte(addr), self.read_byte(addr | 1)]);
         }
         let offset = self.rom_offset(addr);
@@ -319,8 +386,13 @@ impl Cartridge {
         }
     }
 
-    /// Write a byte to cartridge space (only SRAM is writable).
+    /// Write a byte to cartridge space (only SRAM and the EEPROM latches
+    /// are writable).
     pub fn write_byte(&mut self, addr: u32, value: u8) {
+        if let Some(e) = &mut self.eeprom {
+            e.write_byte(addr, value);
+            return;
+        }
         if let Some(i) = self.sram_offset(addr) {
             if let Some(sram) = self.sram.as_mut() {
                 if sram.data[i] != value {
@@ -329,6 +401,18 @@ impl Cartridge {
                 }
             }
         }
+    }
+
+    /// Write a word to cartridge space.
+    pub fn write_word(&mut self, addr: u32, value: u16) {
+        if let Some(e) = &mut self.eeprom {
+            // Both halves reach the EEPROM latches at the same instant.
+            e.write_word(addr & !1, value);
+            return;
+        }
+        let [high, low] = value.to_be_bytes();
+        self.write_byte(addr, high);
+        self.write_byte(addr | 1, low);
     }
 
     /// Write to the cartridge control registers at `0xA130F1..=0xA130FF`.
@@ -356,6 +440,47 @@ impl Cartridge {
         self.sram
             .as_mut()
             .is_some_and(|s| std::mem::take(&mut s.dirty))
+    }
+
+    /// What kind of save memory the cartridge has.
+    #[must_use]
+    pub fn save_type(&self) -> SaveType {
+        if let Some(e) = &self.eeprom {
+            SaveType::Eeprom(e.chip.chip())
+        } else if let Some(s) = &self.sram {
+            SaveType::Sram(s.data.len())
+        } else {
+            SaveType::None
+        }
+    }
+
+    /// The contents of the save memory (SRAM or EEPROM), as stored in the
+    /// `.srm` file.
+    #[must_use]
+    pub fn save_data(&self) -> Option<&[u8]> {
+        if let Some(e) = &self.eeprom {
+            Some(e.chip.data())
+        } else {
+            self.sram.as_ref().map(|s| s.data.as_slice())
+        }
+    }
+
+    /// Mutable save memory, to load a `.srm` file into.
+    pub fn save_data_mut(&mut self) -> Option<&mut [u8]> {
+        if let Some(e) = &mut self.eeprom {
+            Some(e.chip.data_mut())
+        } else {
+            self.sram.as_mut().map(|s| s.data.as_mut_slice())
+        }
+    }
+
+    /// Return true once after the save memory was modified (for periodic
+    /// saving), whatever its kind.
+    pub fn take_save_dirty(&mut self) -> bool {
+        match &mut self.eeprom {
+            Some(e) => e.chip.take_dirty(),
+            None => self.take_sram_dirty(),
+        }
     }
 }
 
