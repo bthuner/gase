@@ -674,3 +674,98 @@ fn bad_roms_and_settings_are_reported_not_fatal() {
     assert_eq!(app.screen_name(), "game");
     assert_eq!(app.rom_name(), Some("picked.bin"));
 }
+
+#[test]
+fn a_gamepad_hides_the_touch_controls_until_the_screen_is_touched() {
+    let caps = Capabilities {
+        touch_screen: true,
+        keyboard: false,
+        ..caps()
+    };
+    let (mut fake, mut app) = setup(caps);
+    app.handle(
+        &mut fake,
+        Event::Resized {
+            width: 1080,
+            height: 2340,
+            pixels_per_point: 3.0,
+        },
+    );
+    open_game(&mut app, &mut fake);
+    app.update(&mut fake);
+    // Portrait with controls: the picture is at the top.
+    assert_eq!(app.video().game_rect.y, 0);
+    assert!(app.video().overlay.is_some());
+
+    // A pad appears: nothing changes until it is used…
+    app.handle(
+        &mut fake,
+        Event::PadConnected {
+            pad: 7,
+            name: "Pad".into(),
+        },
+    );
+    app.update(&mut fake);
+    assert_eq!(app.video().game_rect.y, 0);
+    // …then the controls go and the picture is centred.
+    app.handle(
+        &mut fake,
+        Event::PadButton {
+            pad: 7,
+            button: PadButton::South,
+            pressed: true,
+        },
+    );
+    app.update(&mut fake);
+    assert!(app.video().game_rect.y > 0, "picture centred");
+    // Only the pad's toast is left on the overlay; once it is gone,
+    // nothing is drawn over the game at all.
+    fake.now += 60_000;
+    app.update(&mut fake);
+    assert!(app.video().overlay.is_none(), "no on-screen controls");
+
+    // Touching the screen brings them back.
+    app.handle(
+        &mut fake,
+        Event::Pointer {
+            id: 1,
+            kind: PointerKind::Touch,
+            phase: PointerPhase::Down,
+            x: 500.0,
+            y: 2000.0,
+        },
+    );
+    app.update(&mut fake);
+    assert_eq!(app.video().game_rect.y, 0);
+    assert!(app.video().overlay.is_some());
+
+    // Used again, then unplugged: the controls return by themselves.
+    app.handle(
+        &mut fake,
+        Event::PadButton {
+            pad: 7,
+            button: PadButton::South,
+            pressed: true,
+        },
+    );
+    app.update(&mut fake);
+    assert!(app.video().game_rect.y > 0);
+    app.handle(&mut fake, Event::PadDisconnected { pad: 7 });
+    app.update(&mut fake);
+    assert_eq!(app.video().game_rect.y, 0);
+}
+
+#[test]
+fn suspend_writes_the_save_and_settings_and_pauses() {
+    let (mut fake, mut app) = setup(caps());
+    open_game(&mut app, &mut fake);
+    app.update(&mut fake);
+    // A hotkey's settings change (mute) is normally written when a menu
+    // closes; a phone app may be killed in the background without warning,
+    // so suspending writes it at once.
+    press(&mut app, &mut fake, Key::M);
+    fake.files.remove("settings");
+    app.handle(&mut fake, Event::Suspend);
+    assert!(fake.files.contains_key("settings"), "settings written");
+    assert_eq!(app.screen_name(), "pause", "the game waits in its menu");
+}
