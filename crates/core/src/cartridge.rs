@@ -164,6 +164,11 @@ pub struct Cartridge {
     /// Byte address the EEPROM's SDA is read from, or `u32::MAX`. Cached
     /// outside the `Option` so the hot ROM read path pays one compare.
     eeprom_read: u32,
+    /// Addresses below this are always plain ROM: no mapper, and no SRAM or
+    /// EEPROM that could ever be mapped there. Program fetches, which are
+    /// most of all memory accesses, then need a single compare (see
+    /// [`Cartridge::read_word`]).
+    plain_rom_end: u32,
 }
 
 impl fmt::Debug for Cartridge {
@@ -265,8 +270,16 @@ impl Cartridge {
             Self::detect_sram(&rom)
         };
         let has_mapper = rom.len() > 0x40_0000 || header.system.starts_with("SEGA SSF");
+        let eeprom_read = eeprom.as_ref().map_or(u32::MAX, |e| e.wiring.sda_out.addr);
+        let plain_rom_end = if has_mapper {
+            0
+        } else {
+            let sram_start = sram.as_ref().map_or(u32::MAX, |s| s.start & !1);
+            (rom.len() as u32).min(sram_start).min(eeprom_read & !1)
+        };
         Ok(Self {
-            eeprom_read: eeprom.as_ref().map_or(u32::MAX, |e| e.wiring.sda_out.addr),
+            plain_rom_end,
+            eeprom_read,
             eeprom,
             // Cartridges smaller than 2 MiB with SRAM keep it permanently
             // mapped; bigger ones start with ROM visible.
@@ -357,6 +370,15 @@ impl Cartridge {
     #[inline]
     #[must_use]
     pub fn read_byte(&self, addr: u32) -> u8 {
+        if addr < self.plain_rom_end {
+            return self.rom[addr as usize];
+        }
+        self.read_byte_mapped(addr)
+    }
+
+    /// [`Cartridge::read_byte`] outside the plain ROM area.
+    #[inline(never)]
+    fn read_byte_mapped(&self, addr: u32) -> u8 {
         if addr == self.eeprom_read {
             return self.eeprom.as_ref().map_or(0xFF, SerialEeprom::read_sda);
         }
@@ -372,9 +394,23 @@ impl Cartridge {
     }
 
     /// Read a word from cartridge space.
+    ///
+    /// Split in two so that the common case, a read from plain ROM, is
+    /// small enough to be inlined into the CPU's memory access, and the
+    /// rest (SRAM, EEPROM, mapper, mirroring) stays out of line.
     #[inline]
     #[must_use]
     pub fn read_word(&self, addr: u32) -> u16 {
+        if addr | 1 < self.plain_rom_end {
+            let i = addr as usize;
+            return u16::from_be_bytes([self.rom[i], self.rom[i + 1]]);
+        }
+        self.read_word_mapped(addr)
+    }
+
+    /// [`Cartridge::read_word`] outside the plain ROM area.
+    #[inline(never)]
+    fn read_word_mapped(&self, addr: u32) -> u16 {
         if (self.sram_enabled && self.sram.is_some()) || addr & !1 == self.eeprom_read & !1 {
             return u16::from_be_bytes([self.read_byte(addr), self.read_byte(addr | 1)]);
         }
