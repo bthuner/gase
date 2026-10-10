@@ -29,8 +29,13 @@
 //! This "catch-up" design is simple, fast, and accurate enough for virtually
 //! all software, because the CPUs only interact through shared memory and
 //! interrupts at well-defined points.
+//!
+//! A console can also be driven by an *external* 68000, statically
+//! recompiled code that cannot be stepped one instruction at a time: see
+//! [`external`] for that inverted form of the same schedule.
 
 pub mod debug;
+pub mod external;
 
 use gase_m68k::M68k;
 use gase_savestate::{Reader, State, Writer};
@@ -144,6 +149,9 @@ pub struct Genesis {
     trace_remaining: u64,
     /// Disassembled instructions collected for the frontend to print.
     trace_log: Vec<String>,
+    /// Statically recompiled code standing in for the 68000 interpreter
+    /// (see [`external`]).
+    external: Option<Box<dyn external::ExternalCpu>>,
 }
 
 /// Pick a region the cartridge supports, preferring the Americas, then
@@ -213,11 +221,13 @@ impl Genesis {
             audio_out: Vec::new(),
             trace_remaining: 0,
             trace_log: Vec::new(),
+            external: None,
         };
         genesis.hw.io.ports[0].device = Device::SixButton;
         genesis.hw.io.ports[1].device = Device::SixButton;
         genesis.m68k.set_address_errors(config.address_errors);
         genesis.m68k.reset(&mut genesis.hw);
+        genesis.external = external::registered(genesis.hw.cart.rom());
         genesis
     }
 
@@ -303,8 +313,24 @@ impl Genesis {
         self.resampler.set_input_rate(native / ratio);
     }
 
+    /// Run this console's 68000 code with an external CPU (statically
+    /// recompiled code), or with the interpreter again (`None`).
+    pub fn set_external_cpu(&mut self, cpu: Option<Box<dyn external::ExternalCpu>>) {
+        self.external = cpu;
+    }
+
+    /// The external CPU running this console's 68000 code, if any.
+    #[must_use]
+    pub fn external_cpu(&self) -> Option<&dyn external::ExternalCpu> {
+        self.external.as_deref()
+    }
+
     /// Emulate one complete video frame.
     pub fn run_frame(&mut self) {
+        if self.external.is_some() {
+            self.run_external_frame();
+            return;
+        }
         let total = self.hw.vdp.total_lines();
         let active = self.hw.vdp.active_lines();
         for line in 0..total {
@@ -327,6 +353,31 @@ impl Genesis {
             self.next_line = start + u64::from(MASTER_CYCLES_PER_LINE);
         }
 
+        self.hw.now = self.next_line;
+        self.hw.sync_audio();
+        self.resample_audio();
+        self.frame_count += 1;
+    }
+
+    /// One frame driven by the external CPU (see [`external`]).
+    fn run_external_frame(&mut self) {
+        let mut cpu = self.external.take().expect("an external CPU");
+        let frame_start = self.next_line;
+        let mut console = external::External::new(
+            &mut self.hw,
+            &mut self.z80,
+            &mut self.z80_clock,
+            self.m68k_clock.max(frame_start),
+            frame_start,
+        );
+        cpu.run_frame(&mut self.m68k, &mut console);
+        // An external CPU must return at the end of the frame; if it came
+        // back early, the console finishes the frame with the 68000 idle.
+        console.finish_frame();
+        let clock = console.master_clock();
+        self.external = Some(cpu);
+        self.m68k_clock = clock;
+        self.next_line = self.hw.line_start;
         self.hw.now = self.next_line;
         self.hw.sync_audio();
         self.resample_audio();
