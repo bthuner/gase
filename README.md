@@ -21,6 +21,16 @@ too.
 | Quality of life | Menus for keyboard, gamepad, mouse and touch; save states with previews, rewind, fast-forward, remappable controls, gamepad hot-plug, dynamic audio rate control |
 | Best practices | `forbid(unsafe_code)` (the web and phone entry points only *deny* it, in one documented module each), clippy-clean, CI, one external dependency (SDL2, optional) |
 
+## Downloads
+
+Every [release](https://github.com/bthuner/gase/releases) has ready-made
+files: Linux, Windows and macOS programs (SDL2 built in, nothing to
+install), the browser version, an Android APK and an unsigned iOS app,
+plus checksums and the source code. The macOS program is not notarised:
+after unpacking, run `xattr -d com.apple.quarantine gase` once. The APK is
+signed with a debug key, and the iOS app must be signed (AltStore,
+Sideloadly, Xcode) before an iPhone accepts it.
+
 ## Building
 
 You need a Rust toolchain (1.85+) and, for the windowed frontend, the SDL2
@@ -35,6 +45,14 @@ The **Android and iOS apps** run the same SDL2 shell; see
 [`mobile/README.md`](mobile/README.md) for how to build them (Android SDK +
 NDK, or a Mac with Xcode) and how a Rust program becomes a phone app.
 `gase --mobile --ui-size 540x1170` tries the phone app's shell on a desktop.
+
+To build a program that does not need SDL2 installed where it runs, as
+the releases do, let the `sdl2` crate compile the SDL source it ships
+(needs CMake and a C compiler) and link it in:
+
+```sh
+cargo build --release -p gase --features sdl2/bundled,sdl2/static-link
+```
 
 Without SDL2, build the dependency-free headless runner:
 
@@ -248,7 +266,9 @@ time (`web/build.sh --out docs/play` locally).
 ## Contributing
 
 Work happens on `feature/…` and `fix/…` branches, merged into `develop`
-through pull requests; `main` follows releases.
+through pull requests; `main` follows releases. Publishing a release on
+GitHub (or running the `Release` workflow by hand) builds every platform's
+files and attaches them; see `.github/workflows/release.yml`.
 
 ## License
 

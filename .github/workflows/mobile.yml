@@ -18,9 +18,19 @@ on:
       - Cargo.lock
       - .github/workflows/mobile.yml
   workflow_dispatch:
+  # The release workflow reuses these builds for the release's APK and iOS
+  # app, at the commit being released.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit, branch or tag to build (default: the caller's)"
+        type: string
+        default: ""
 
 concurrency:
-  group: mobile-${{ github.ref }}
+  # github.workflow is the caller's name when called, so a release build
+  # never cancels (or is cancelled by) a normal run.
+  group: ${{ github.workflow }}-mobile-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -57,6 +69,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -103,6 +117,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
