@@ -342,6 +342,10 @@ mod tests {
         vdp.write_control(0xC002); // CRAM write, address 2 (entry 1)
         vdp.write_control(0x0000);
         vdp.write_data(0x000E); // red
+        // The write waits in the FIFO for an access slot: let time pass.
+        for line in 1..=2 {
+            vdp.begin_line(line);
+        }
         assert_eq!(vdp.cram_rgb(1), 0xFF0000);
         assert_eq!(vdp.cram_rgb(0), 0x000000);
     }
