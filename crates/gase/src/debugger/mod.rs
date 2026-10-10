@@ -1,9 +1,10 @@
 //! The built-in debugger: a window that shows what the console is doing,
 //! for learning how a Mega Drive game works.
 //!
-//! Everything is drawn into a plain pixel buffer ([`canvas::Canvas`]) with a
-//! tiny built-in font ([`font`]), so the views need no GUI library, can be
-//! unit-tested, and the headless runner can save them as PNG files. The SDL
+//! Everything is drawn into a plain pixel buffer ([`Canvas`]) with a tiny
+//! built-in font ([`gase_app::font`]), shared with the menus of `gase-app`,
+//! so the views need no GUI library, can be unit-tested, and the headless
+//! runner can save them as PNG files. The SDL
 //! frontend only copies the buffer into a second window and forwards keys
 //! ([`Panel::key`]).
 //!
@@ -13,15 +14,13 @@
 // Without the window, only the headless dumps and reports use this module.
 #![cfg_attr(not(feature = "sdl"), allow(dead_code))]
 
-pub mod canvas;
 pub mod cpu;
-pub mod font;
 pub mod vdp;
 
 use gase_core::{Debugger, Genesis};
 
-use canvas::Canvas;
-use font::draw_text;
+pub use gase_app::canvas::Canvas;
+use gase_app::font::draw_text;
 use vdp::Layer;
 
 /// Size of the debugger picture in pixels.

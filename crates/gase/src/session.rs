@@ -1,10 +1,10 @@
-//! Everything both frontends share: loading the ROM, game saves and
-//! save-state files.
+//! The headless runner's game: loading the ROM, the game's own saves and
+//! screenshots, with plain `std::fs`.
 //!
-//! Files live next to the ROM: `game.srm` for the game's own saves
-//! (battery-backed SRAM or serial EEPROM, whichever the cartridge has),
-//! `game.state0` ... `game.state9` for save states and `game-<frame>.png`
-//! for screenshots.
+//! The windowed frontend uses `gase-app` instead, which keeps the same
+//! files in the same places (see [`crate::desktop`]): `game.srm` next to
+//! the ROM for the game's own saves (battery-backed SRAM or serial EEPROM,
+//! whichever the cartridge has) and `game-<frame>.png` for screenshots.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,10 +23,9 @@ pub struct Session {
 
 impl Session {
     pub fn open(options: &Options, sample_rate: u32) -> Result<Self, String> {
-        let data = fs::read(&options.rom)
-            .map_err(|e| format!("cannot read {}: {e}", options.rom.display()))?;
-        let cart =
-            Cartridge::from_bytes(&data).map_err(|e| format!("{}: {e}", options.rom.display()))?;
+        let rom = options.rom.as_deref().ok_or("no ROM given")?;
+        let data = fs::read(rom).map_err(|e| format!("cannot read {}: {e}", rom.display()))?;
+        let cart = Cartridge::from_bytes(&data).map_err(|e| format!("{}: {e}", rom.display()))?;
         let config = Config {
             region: options.region,
             sample_rate,
@@ -35,7 +34,7 @@ impl Session {
         };
         let mut session = Self {
             genesis: Genesis::new(cart, &config),
-            rom_path: options.rom.clone(),
+            rom_path: rom.to_path_buf(),
         };
         session.load_save();
         session.genesis.set_trace(options.trace);
@@ -94,11 +93,6 @@ impl Session {
         self.sibling(".srm")
     }
 
-    #[cfg_attr(not(feature = "sdl"), allow(dead_code))] // used by the window frontend only
-    pub fn state_path(&self, slot: u8) -> PathBuf {
-        self.sibling(&format!(".state{slot}"))
-    }
-
     fn load_save(&mut self) {
         let path = self.save_path();
         if let (Some(save), Ok(data)) = (
@@ -122,24 +116,6 @@ impl Session {
                 eprintln!("Cannot write {}: {e}", path.display());
             }
         }
-    }
-
-    #[cfg_attr(not(feature = "sdl"), allow(dead_code))] // used by the window frontend only
-    pub fn save_state(&self, slot: u8) -> Result<PathBuf, String> {
-        let path = self.state_path(slot);
-        fs::write(&path, self.genesis.save_state())
-            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        Ok(path)
-    }
-
-    #[cfg_attr(not(feature = "sdl"), allow(dead_code))] // used by the window frontend only
-    pub fn load_state(&mut self, slot: u8) -> Result<PathBuf, String> {
-        let path = self.state_path(slot);
-        let data = fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        self.genesis
-            .load_state(&data)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(path)
     }
 
     pub fn screenshot(&self, path: Option<&Path>) -> Result<PathBuf, String> {
