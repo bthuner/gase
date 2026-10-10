@@ -292,7 +292,15 @@ impl M68k {
     /// Resolve an effective address into an [`Operand`]: read its extension
     /// words, apply `(An)+` / `-(An)` side effects and charge the internal
     /// cycles of the address calculation.
-    #[inline]
+    ///
+    /// This and the other operand helpers below are `#[inline(always)]`:
+    /// they run for nearly every operand of every instruction, yet they are
+    /// big enough (one arm per addressing mode) that the compiler keeps them
+    /// out of line. The calls, and passing each [`Operand`] back through
+    /// memory, then cost 4-8% of the whole emulator's time (measured with
+    /// callgrind). Inlined into each instruction handler, the operand stays
+    /// in registers.
+    #[inline(always)]
     pub(crate) fn resolve<B: Bus>(&mut self, bus: &mut B, ea: Ea, size: Size) -> Operand {
         self.fault_pc_bias = Self::fault_pc_bias(ea.mode, size);
         self.program_space = false;
@@ -316,7 +324,7 @@ impl M68k {
 
     /// The address denoted by a memory mode that has no side effects
     /// (`(An)`, displacements, indexed, absolute, PC-relative).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn control_address<B: Bus>(&mut self, bus: &mut B, ea: Ea) -> u32 {
         let r = ea.reg as usize;
         // PC-relative operands are read in program space (function code
@@ -352,7 +360,7 @@ impl M68k {
     }
 
     /// Read the value of a resolved operand.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn read_operand<B: Bus>(
         &mut self,
         bus: &mut B,
@@ -379,7 +387,7 @@ impl M68k {
 
     /// Write a value to a resolved operand. Data registers keep the bits
     /// above `size`; address registers are always written in full.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn write_operand<B: Bus>(
         &mut self,
         bus: &mut B,
@@ -399,7 +407,7 @@ impl M68k {
     }
 
     /// Resolve and read in one go: the common case of a source operand.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn read_ea<B: Bus>(&mut self, bus: &mut B, ea: Ea, size: Size) -> Exec<u32> {
         let operand = self.resolve(bus, ea, size);
         self.read_operand(bus, operand, size)

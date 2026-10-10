@@ -465,7 +465,8 @@ impl M68k {
         self.write_word(bus, addr.wrapping_add(2), value as u16)
     }
 
-    #[inline]
+    // Always inlined, like the operand helpers in `ea.rs` (see `resolve`).
+    #[inline(always)]
     pub(crate) fn read_sized<B: Bus>(&mut self, bus: &mut B, addr: u32, size: Size) -> Exec<u32> {
         Ok(match size {
             Size::Byte => u32::from(self.read_byte(bus, addr)),
@@ -474,7 +475,7 @@ impl M68k {
         })
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn write_sized<B: Bus>(
         &mut self,
         bus: &mut B,
