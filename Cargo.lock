@@ -67,6 +67,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gase-web"
+version = "0.1.0"
+dependencies = [
+ "gase-app",
+ "gase-core",
+]
+
+[[package]]
 name = "gase-z80"
 version = "0.1.0"
 dependencies = [
