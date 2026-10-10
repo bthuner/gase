@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "gase-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-m68k",
  "gase-savestate",
@@ -16,43 +16,43 @@ dependencies = [
 
 [[package]]
 name = "gase-docs-shots"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-core",
 ]
 
 [[package]]
 name = "gase-m68k"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-savestate"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "gase-sound"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-vdp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-z80"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-zip"
-version = "0.1.0"
+version = "0.2.0"
