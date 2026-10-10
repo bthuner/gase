@@ -12,6 +12,7 @@ All notable changes to gase are listed here. The format follows
   version, the Android APK and an unsigned iOS `.ipa`, and attaches them
   with checksums to a GitHub release. It runs when a release is published,
   or by hand to create a release (tag included) or refill an existing one.
+  Older versions get the platforms they have (0.1.0: desktop only).
 
 ## [0.2.0] - 2026-10-10
 
