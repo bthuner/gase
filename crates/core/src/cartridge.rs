@@ -164,6 +164,11 @@ pub struct Cartridge {
     /// Byte address the EEPROM's SDA is read from, or `u32::MAX`. Cached
     /// outside the `Option` so the hot ROM read path pays one compare.
     eeprom_read: u32,
+    /// Addresses below this are always plain ROM: no mapper, and no SRAM or
+    /// EEPROM that could ever be mapped there. Program fetches, which are
+    /// most of all memory accesses, then need a single compare (see
+    /// [`Cartridge::read_word`]).
+    plain_rom_end: u32,
 }
 
 impl fmt::Debug for Cartridge {
@@ -265,8 +270,16 @@ impl Cartridge {
             Self::detect_sram(&rom)
         };
         let has_mapper = rom.len() > 0x40_0000 || header.system.starts_with("SEGA SSF");
+        let eeprom_read = eeprom.as_ref().map_or(u32::MAX, |e| e.wiring.sda_out.addr);
+        let plain_rom_end = if has_mapper {
+            0
+        } else {
+            let sram_start = sram.as_ref().map_or(u32::MAX, |s| s.start & !1);
+            (rom.len() as u32).min(sram_start).min(eeprom_read & !1)
+        };
         Ok(Self {
-            eeprom_read: eeprom.as_ref().map_or(u32::MAX, |e| e.wiring.sda_out.addr),
+            plain_rom_end,
+            eeprom_read,
             eeprom,
             // Cartridges smaller than 2 MiB with SRAM keep it permanently
             // mapped; bigger ones start with ROM visible.
@@ -357,6 +370,17 @@ impl Cartridge {
     #[inline]
     #[must_use]
     pub fn read_byte(&self, addr: u32) -> u8 {
+        if addr < self.plain_rom_end {
+            return self.rom[addr as usize];
+        }
+        self.read_byte_mapped(addr)
+    }
+
+    /// The full memory map of cartridge space: the reference that the plain
+    /// ROM fast path of [`Cartridge::read_byte`] must match (a unit test
+    /// checks it does).
+    #[inline(never)]
+    fn read_byte_mapped(&self, addr: u32) -> u8 {
         if addr == self.eeprom_read {
             return self.eeprom.as_ref().map_or(0xFF, SerialEeprom::read_sda);
         }
@@ -372,9 +396,25 @@ impl Cartridge {
     }
 
     /// Read a word from cartridge space.
+    ///
+    /// Split in two so that the common case, a read from plain ROM, is
+    /// small enough to be inlined into the CPU's memory access, and the
+    /// rest (SRAM, EEPROM, mapper, mirroring) stays out of line.
     #[inline]
     #[must_use]
     pub fn read_word(&self, addr: u32) -> u16 {
+        if addr | 1 < self.plain_rom_end {
+            let i = addr as usize;
+            return u16::from_be_bytes([self.rom[i], self.rom[i + 1]]);
+        }
+        self.read_word_mapped(addr)
+    }
+
+    /// The full memory map of cartridge space: the reference that the plain
+    /// ROM fast path of [`Cartridge::read_word`] must match (a unit test
+    /// checks it does).
+    #[inline(never)]
+    fn read_word_mapped(&self, addr: u32) -> u16 {
         if (self.sram_enabled && self.sram.is_some()) || addr & !1 == self.eeprom_read & !1 {
             return u16::from_be_bytes([self.read_byte(addr), self.read_byte(addr | 1)]);
         }
@@ -572,6 +612,47 @@ mod tests {
         assert_eq!(cart.read_byte(0x200001), 0x42);
         assert!(cart.take_sram_dirty());
         assert!(!cart.take_sram_dirty());
+    }
+
+    #[test]
+    fn plain_rom_fast_path_matches_full_map() {
+        // ROMs of odd sizes, with a mapper, with a serial EEPROM, and with
+        // odd-lane SRAM inside and outside the ROM, switched in and out.
+        let patterned = |size: usize| {
+            let mut rom = rom_with_header(size);
+            for (i, byte) in rom.iter_mut().enumerate().skip(0x200) {
+                *byte = (i * 7 + (i >> 9)) as u8;
+            }
+            rom
+        };
+        let mut carts = vec![
+            Cartridge::from_bytes(&patterned(0x1_2346)).unwrap(),
+            Cartridge::from_bytes(&patterned(0x50_0000)).unwrap(),
+        ];
+        let mut eeprom_rom = patterned(0x8_0000);
+        eeprom_rom[0x1B0..0x1B4].copy_from_slice(b"RA\xE8\x40");
+        let eeprom = Cartridge::from_bytes(&eeprom_rom).unwrap();
+        assert!(eeprom.eeprom.is_some());
+        carts.push(eeprom);
+        for (size, start) in [(0x1000, 0x20_0001u32), (0x30_0000, 0x20_0001)] {
+            let mut rom = patterned(size);
+            let end = start + 0x3FFE;
+            rom[0x1B0..0x1B4].copy_from_slice(&[b'R', b'A', 0xF8, 0x20]);
+            rom[0x1B4..0x1B8].copy_from_slice(&start.to_be_bytes());
+            rom[0x1B8..0x1BC].copy_from_slice(&end.to_be_bytes());
+            let mut cart = Cartridge::from_bytes(&rom).unwrap();
+            cart.write_byte(start, 0x5A);
+            carts.push(cart.clone());
+            cart.write_register(0xA130F1, 1 - u8::from(cart.sram_enabled));
+            carts.push(cart);
+        }
+        for cart in &carts {
+            for addr in (0..0x40_0000).step_by(0x101) {
+                assert_eq!(cart.read_byte(addr), cart.read_byte_mapped(addr));
+                let even = addr & !1;
+                assert_eq!(cart.read_word(even), cart.read_word_mapped(even));
+            }
+        }
     }
 
     #[test]

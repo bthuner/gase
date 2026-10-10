@@ -393,3 +393,78 @@ fn muted_channels_leave_the_mix_but_keep_running() {
     ym.set_muted_channels(0);
     assert_eq!(ym.clock_sample(), (127 << 6, 0));
 }
+
+/// A tiny deterministic pseudo-random generator for the tests below.
+fn next_random(state: &mut u32) -> u32 {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    *state
+}
+
+/// A silent operator (see `Operator::is_silent`) with random settings.
+fn random_silent_operator(seed: &mut u32) -> operator::Operator {
+    let mut r = || next_random(seed);
+    operator::Operator {
+        dt: (r() & 7) as u8,
+        mul: (r() & 15) as u8,
+        tl: (r() & 0x7F) as u8,
+        ks: (r() & 3) as u8,
+        ar: (r() & 31) as u8,
+        am: r() & 1 != 0,
+        d1r: (r() & 31) as u8,
+        d2r: (r() & 31) as u8,
+        sl: (r() & 15) as u8,
+        rr: (r() & 15) as u8,
+        ssg: (r() & 15) as u8,
+        phase: r() & 0xF_FFFF,
+        inc: r() & 0x3_FFFF,
+        kcode: (r() & 31) as u8,
+        eg_phase: operator::RELEASE,
+        level: operator::MAX_ATTENUATION,
+        key_reg: false,
+        key: false,
+        ssg_inv: r() & 1 != 0,
+    }
+}
+
+#[test]
+fn envelope_tick_leaves_silent_operators_unchanged() {
+    // The reason `eg_clock` may skip silent operators: the full tick
+    // (`eg_step`) changes nothing on them, for any settings and counter.
+    let mut seed = 0x1234_5678;
+    for _ in 0..200 {
+        let op = random_silent_operator(&mut seed);
+        let mut stepped = op.clone();
+        for counter in 1..4096 {
+            stepped.eg_step(counter);
+            assert_eq!(format!("{stepped:?}"), format!("{op:?}"));
+        }
+    }
+}
+
+#[test]
+fn silent_channel_fast_path_matches_full_computation() {
+    let roms = &*ROMS;
+    let mut seed = 0x9E37_79B9;
+    for _ in 0..2000 {
+        let mut ch = channel::Channel::default();
+        for op in &mut ch.ops {
+            *op = random_silent_operator(&mut seed);
+        }
+        ch.algorithm = (next_random(&mut seed) & 7) as u8;
+        ch.feedback = (next_random(&mut seed) & 7) as u8;
+        ch.ams = (next_random(&mut seed) & 3) as u8;
+        ch.op1_out = [next_random(&mut seed) as i16, next_random(&mut seed) as i16];
+        ch.s2_out = next_random(&mut seed) as i16;
+        let lfo_am = (next_random(&mut seed) & 0x7E) as u16;
+        let mut reference = ch.clone();
+        for _ in 0..4 {
+            assert_eq!(
+                ch.calc(roms, lfo_am),
+                reference.calc_operators(roms, lfo_am)
+            );
+            assert_eq!(format!("{ch:?}"), format!("{reference:?}"));
+        }
+    }
+}

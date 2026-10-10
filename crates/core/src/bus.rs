@@ -384,13 +384,22 @@ impl gase_m68k::Bus for Hardware {
 pub struct Z80Bus<'a>(pub &'a mut Hardware);
 
 impl gase_z80::Bus for Z80Bus<'_> {
+    // Sound RAM, where the Z80's program and most of its data live, is
+    // handled inline; the rest of the memory map out of line.
     #[inline]
     fn read(&mut self, addr: u16) -> u8 {
+        if addr < 0x4000 {
+            return self.0.zram[usize::from(addr & 0x1FFF)];
+        }
         self.0.z80_space_read(addr)
     }
 
     #[inline]
     fn write(&mut self, addr: u16, value: u8) {
+        if addr < 0x4000 {
+            self.0.zram[usize::from(addr & 0x1FFF)] = value;
+            return;
+        }
         self.0.z80_space_write(addr, value);
     }
 
