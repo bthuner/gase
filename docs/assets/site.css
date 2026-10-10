@@ -645,3 +645,56 @@ tbody th { font-weight: 650; }
   .masthead, .theme-toggle, .layers .controls { display: none; }
   .js .reveal { opacity: 1; transform: none; }
 }
+
+/* ---------------------------------------------------------------- interface */
+/* The app's own pictures (gase --dump-ui): drawn at one pixel per point on
+   the desktop, two on the phone, so desktop shots are scaled by whole
+   numbers and phone shots shown at their size in points. */
+.ui-fig .plate { line-height: 0; }
+.ui-shot { width: 100%; max-width: 960px; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
+.ui-row { display: grid; grid-template-columns: 1fr; gap: clamp(20px, 2.5vw, 36px) var(--gutter); }
+@media (min-width: 760px) { .ui-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.ui-row figure { margin: 0; }
+.ui-row .plate { padding: clamp(6px, 1vw, 12px); }
+/* Scaled down here, so smooth scaling: pixelated would drop whole rows of the font. */
+.ui-row img { width: 100%; height: auto; image-rendering: auto; }
+.ui-row figcaption { margin-top: 0.5rem; }
+/* Phones: portrait and landscape side by side, at the size of a real
+   phone (390 points wide), without a drawn device around them. */
+.phones { display: flex; flex-wrap: wrap; gap: clamp(20px, 3vw, 44px); align-items: flex-end; }
+.phones figure { margin: 0; }
+.phones .plate { padding: 0; background: #000; border: 1px solid var(--rule-2); line-height: 0; }
+.phones img { display: block; width: 100%; height: auto; }
+.phones .portrait { width: min(260px, 70vw); }
+.phones .landscape { width: min(564px, 100%); }
+.browser-fig .plate { padding: 0; border: 1px solid var(--rule-2); line-height: 0; }
+.browser-fig .bar { display: flex; gap: 0.8rem; align-items: center; padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--rule-2); font-family: var(--mono); font-size: 0.74rem; color: var(--ink-3); line-height: 1.2; background: var(--bg-2); }
+.browser-fig .bar i { display: block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--rule-2); }
+.browser-fig img { width: 100%; height: auto; }
+
+/* The way into the player: a plain editorial link, underlined in red. */
+.play-link { font-family: var(--display); font-weight: 700; font-stretch: 112%; text-decoration: none; border-bottom: 2px solid var(--red); padding-bottom: 0.1em; }
+.play-link:hover { color: var(--red-ink); }
+.play-link::after { content: " →"; color: var(--red); }
+
+/* ---------------------------------------------------------------- LZ77 */
+.lz .controls { display: grid; gap: 0.4rem; font-family: var(--display); font-size: 0.86rem; color: var(--ink-2); margin-bottom: 1.2rem; border-top: 1px solid var(--rule-2); padding-top: 0.9rem; }
+.lz input[type="text"] { font: inherit; font-family: var(--mono); font-size: 1rem; color: var(--ink); background: var(--bg-2); border: 1px solid var(--rule-2); padding: 0.55rem 0.7rem; width: 100%; }
+.lz input[type="text"]:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.lz-out { font-family: var(--mono); font-size: clamp(0.95rem, 0.8rem + 0.6vw, 1.3rem); line-height: 2.1; word-break: break-all; }
+.lz-out .lit { color: var(--ink); }
+.lz-out .ref { color: var(--red-ink); border-bottom: 2px solid var(--red); padding: 0 0.15em; margin: 0 0.1em; white-space: nowrap; }
+.lz-out .ref small { font-size: 0.6em; color: var(--ink-3); margin-left: 0.25em; }
+.lz-stats { margin-top: 0.8rem; font-family: var(--display); font-size: 0.82rem; color: var(--ink-3); }
+.lz-stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- memory */
+.mem svg { width: 100%; height: auto; font-family: var(--mono); }
+.mem .cell { fill: var(--bg-2); stroke: var(--rule-2); }
+.mem .cell.hot { fill: var(--sel); stroke: var(--red); }
+.mem text { fill: var(--ink-2); font-size: 13px; }
+.mem .big { fill: var(--ink); font-family: var(--display); font-weight: 800; font-stretch: 112%; font-size: 17px; }
+.mem .wire { stroke: var(--ink-3); stroke-width: 1.4; fill: none; }
+.mem .wire.red { stroke: var(--red); }
+.mem .arrow { fill: var(--ink-3); }
+.hero .try { margin-top: 1.2rem; font-size: 1.05rem; }
