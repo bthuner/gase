@@ -16,7 +16,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "gase"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-app",
  "gase-core",
@@ -25,14 +25,14 @@ dependencies = [
 
 [[package]]
 name = "gase-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-core",
 ]
 
 [[package]]
 name = "gase-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-m68k",
  "gase-savestate",
@@ -44,14 +44,14 @@ dependencies = [
 
 [[package]]
 name = "gase-m68k"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-mobile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase",
  "sdl2",
@@ -59,25 +59,25 @@ dependencies = [
 
 [[package]]
 name = "gase-savestate"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "gase-sound"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-vdp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-app",
  "gase-core",
@@ -85,14 +85,14 @@ dependencies = [
 
 [[package]]
 name = "gase-z80"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gase-savestate",
 ]
 
 [[package]]
 name = "gase-zip"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "lazy_static"
