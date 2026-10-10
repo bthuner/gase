@@ -1,0 +1,10 @@
+[package]
+name = "gase-zip"
+description = "Dependency-free ZIP archive reader and DEFLATE decoder, written to be read"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

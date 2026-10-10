@@ -27,6 +27,14 @@
 //! frontend both kinds are just "save data" ([`Cartridge::save_data`]),
 //! stored in the same `.srm` file.
 //!
+//! # Zip archives
+//!
+//! [`Cartridge::from_bytes`] also accepts a zip archive holding the ROM,
+//! so every frontend opens zipped games without doing anything. It
+//! recognises the archive by its first bytes and picks the ROM inside with
+//! [`gase_zip::find_rom`]; see the `gase-zip` crate for how ZIP and
+//! DEFLATE work.
+//!
 //! # Mappers
 //!
 //! The 68000 sees at most 4 MiB of cartridge. Super Street Fighter II (5 MiB)
@@ -64,6 +72,15 @@ pub enum LoadError {
     TooSmall(usize),
     /// The file is larger than any known cartridge.
     TooLarge(usize),
+    /// The file is a zip archive without a Mega Drive ROM in it.
+    NoRomInArchive,
+    /// The file is a zip archive that could not be read: damaged, or using
+    /// a feature gase does not support. `file` is the ROM being extracted,
+    /// if the archive's table of contents could be read.
+    Archive {
+        file: Option<String>,
+        error: gase_zip::Error,
+    },
 }
 
 impl fmt::Display for LoadError {
@@ -71,11 +88,38 @@ impl fmt::Display for LoadError {
         match self {
             LoadError::TooSmall(n) => write!(f, "ROM is too small ({n} bytes)"),
             LoadError::TooLarge(n) => write!(f, "ROM is too large ({n} bytes)"),
+            LoadError::NoRomInArchive => {
+                f.write_str("the zip archive contains no Mega Drive ROM (no ")?;
+                let extensions = gase_zip::archive::ROM_EXTENSIONS;
+                for (i, ext) in extensions.iter().enumerate() {
+                    let separator = match i {
+                        0 => "",
+                        _ if i + 1 == extensions.len() => " or ",
+                        _ => ", ",
+                    };
+                    write!(f, "{separator}.{ext}")?;
+                }
+                f.write_str(" file)")
+            }
+            LoadError::Archive { file: None, error } => {
+                write!(f, "cannot read the zip archive: {error}")
+            }
+            LoadError::Archive {
+                file: Some(file),
+                error,
+            } => write!(f, "cannot extract {file} from the zip archive: {error}"),
         }
     }
 }
 
-impl std::error::Error for LoadError {}
+impl std::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            LoadError::Archive { error, .. } => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Battery-backed save RAM.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,13 +278,42 @@ fn looks_like_smd(data: &[u8]) -> bool {
     data.len() > 512 && data.len() % 0x4000 == 512 && data[8] == 0xAA && data[9] == 0xBB
 }
 
+/// Whether `data` is a zip archive: it starts with a file's local header
+/// (`PK\3\4`), or with the end record if the archive is empty
+/// (`PK\5\6`). A ROM does not start like that: its first long word is
+/// the 68000's initial stack pointer, which games put at the top of RAM
+/// (`0x00FFFFxx` or `0x01000000`), never at `0x504B0304`.
+fn looks_like_zip(data: &[u8]) -> bool {
+    data.starts_with(b"PK\x03\x04") || data.starts_with(b"PK\x05\x06")
+}
+
+/// Extract the ROM from a zip archive.
+fn unzip_rom(data: &[u8]) -> Result<Vec<u8>, LoadError> {
+    let archive =
+        gase_zip::Archive::parse(data).map_err(|error| LoadError::Archive { file: None, error })?;
+    let entry = gase_zip::find_rom(&archive).ok_or(LoadError::NoRomInArchive)?;
+    archive.read(entry).map_err(|error| LoadError::Archive {
+        file: Some(entry.name().to_owned()),
+        error,
+    })
+}
+
 impl Cartridge {
-    /// Load a ROM image (plain `.bin`/`.md`/`.gen`, or interleaved `.smd`).
+    /// Load a ROM image: plain `.bin`/`.md`/`.gen`, interleaved `.smd`, or
+    /// either of them in a `.zip` archive.
     pub fn from_bytes(data: &[u8]) -> Result<Self, LoadError> {
-        let mut rom = if looks_like_smd(data) {
-            deinterleave_smd(data)
+        if looks_like_zip(data) {
+            return Self::from_rom(unzip_rom(data)?);
+        }
+        Self::from_rom(data.to_vec())
+    }
+
+    /// Load an unpacked ROM image (plain or `.smd`).
+    fn from_rom(data: Vec<u8>) -> Result<Self, LoadError> {
+        let mut rom = if looks_like_smd(&data) {
+            deinterleave_smd(&data)
         } else {
-            data.to_vec()
+            data
         };
         if rom.len() < 0x200 {
             return Err(LoadError::TooSmall(rom.len()));
@@ -677,5 +750,67 @@ mod tests {
         assert_eq!(cart.read_byte(0x08_0000), 0);
         cart.write_register(0xA130F3, 9); // slot 1 -> page 9
         assert_eq!(cart.read_byte(0x08_0000), 0x77);
+    }
+
+    /// Archives made by Python's zipfile, from the gase-zip tests.
+    fn fixture(name: &str) -> Vec<u8> {
+        let path = format!(
+            "{}/../zip/tests/fixtures/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    }
+
+    #[test]
+    fn zipped_rom() {
+        // "Game (USA)/Game (USA).MD" is picked among other files.
+        let cart = Cartridge::from_bytes(&fixture("several.zip")).unwrap();
+        let expected: Vec<u8> = (0..3000).map(|i| ((i * 7) ^ (i >> 8)) as u8).collect();
+        assert_eq!(cart.rom(), &expected[..]);
+        let cart = Cartridge::from_bytes(&fixture("streamed.zip")).unwrap();
+        assert_eq!(cart.rom().len(), 5000);
+    }
+
+    #[test]
+    fn zip_errors() {
+        assert_eq!(
+            Cartridge::from_bytes(&fixture("no_rom.zip")).unwrap_err(),
+            LoadError::NoRomInArchive
+        );
+        assert_eq!(
+            Cartridge::from_bytes(&fixture("empty.zip")).unwrap_err(),
+            LoadError::NoRomInArchive
+        );
+
+        let truncated = &fixture("several.zip")[..1000];
+        let err = Cartridge::from_bytes(truncated).unwrap_err();
+        assert_eq!(
+            err,
+            LoadError::Archive {
+                file: None,
+                error: gase_zip::Error::Truncated("no end of central directory")
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "cannot read the zip archive: archive is truncated (no end of central directory)"
+        );
+
+        let mut damaged = fixture("streamed.zip");
+        damaged[1000] ^= 0x10;
+        let err = Cartridge::from_bytes(&damaged).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Archive { file: Some(f), .. } if f == "game.gen"),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .starts_with("cannot extract game.gen from the zip archive: "),
+            "{err}"
+        );
+        assert_eq!(
+            LoadError::NoRomInArchive.to_string(),
+            "the zip archive contains no Mega Drive ROM (no .md, .bin, .gen, .smd, .68k or .sgd file)"
+        );
     }
 }
