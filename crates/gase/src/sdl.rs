@@ -1,4 +1,22 @@
-//! The windowed frontend, built on SDL2 (window, audio, keyboard, gamepads).
+//! The desktop shell, built on SDL2: a window, sound, and input devices
+//! around [`gase_app::App`].
+//!
+//! Everything the user sees and touches is decided by the app; this file
+//! only translates. Each pass of the main loop:
+//!
+//! 1. **Events in.** SDL's events become [`gase_app::Event`]s: scancodes
+//!    become [`Key`]s, SDL GameController buttons (already in the standard
+//!    layout, for any pad SDL knows) become [`PadButton`]s, mouse and
+//!    fingers become pointers, dropped files become ROMs to open.
+//! 2. **Update.** [`App::update`] runs the menus or the emulator and
+//!    queues the sound ([`SdlPlatform::queue_audio`]).
+//! 3. **Requests.** What the app asked for (window title, fullscreen,
+//!    quit, the debugger) is carried out.
+//! 4. **Video out.** The game frame and, when there is one, the overlay are
+//!    uploaded to two streaming textures and drawn: the game stretched into
+//!    its rectangle, the overlay enlarged by a whole factor and blended on
+//!    top (GPU work, so menus cost almost nothing).
+//! 5. **Wait** as the app's [`Pacing`] says.
 //!
 //! # Audio/video synchronisation
 //!
@@ -6,117 +24,236 @@
 //! refreshes at 60 Hz, and the sound card consumes samples at its own pace.
 //! We let **audio drive timing**: after each frame we wait until the sound
 //! queue has drained to a target level, then emulate the next frame. To keep
-//! the queue from slowly over- or under-flowing, the resampler's ratio is
-//! nudged by up to ±0.5% depending on how full the queue is (dynamic rate
-//! control) — far too little to hear, but enough to absorb clock drift.
+//! the queue from slowly over- or under-flowing, the app nudges the
+//! resampler's ratio by up to ±0.5% depending on how full the queue is
+//! (dynamic rate control) — far too little to hear, but enough to absorb
+//! clock drift.
 //!
 //! # The debugger window
 //!
 //! F1 (or the backtick key) opens a second window with the debugger
 //! ([`crate::debugger::Panel`]). While it has the keyboard focus, keys go to
-//! the debugger instead of the game. When breakpoints are set, or the
-//! debugger has stopped the console in the middle of a frame, frames run
-//! through [`gase_core::Debugger`] instead of [`gase_core::Genesis::run_frame`].
+//! the debugger instead of the game. The debugger is a desktop feature, so
+//! it lives here and works on the app's [`gase_app::Game`].
 
 use std::time::{Duration, Instant};
 
-use gase_core::{Buttons, Debugger, Rewind, Stop};
+use gase_app::{
+    App, Capabilities, DebugRun, Event, Key, Pacing, PadAxis, PadButton, Platform, PointerKind,
+    PointerPhase, Request,
+};
+use gase_core::Stop;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
-use sdl2::event::{Event, WindowEvent};
+use sdl2::event::{Event as SdlEvent, WindowEvent};
 use sdl2::keyboard::{Keycode, Scancode};
+use sdl2::mouse::MouseButton;
 use sdl2::pixels::PixelFormatEnum;
-use sdl2::rect::Rect;
+use sdl2::rect::Rect as SdlRect;
+use sdl2::render::{BlendMode, Texture, WindowCanvas};
 use sdl2::video::FullscreenType;
 
 use crate::cli::Options;
-use crate::debugger::{self, Action, Key, Panel};
-use crate::session::Session;
+use crate::debugger::{self, Action, Panel};
+use crate::desktop::Desktop;
 
 const SAMPLE_RATE: u32 = 48_000;
-/// Audio queue level to aim for: 50 ms.
-const TARGET_QUEUE: u32 = SAMPLE_RATE / 20;
-/// Frames run per displayed frame while fast-forwarding.
-const FAST_FORWARD_FRAMES: u32 = 4;
-/// How long the window title shows a status message.
-const MESSAGE_TIME: Duration = Duration::from_secs(2);
+/// SDL reports mouse events it synthesises from touches with this id; the
+/// touches themselves arrive as finger events.
+const TOUCH_MOUSE_ID: u32 = u32::MAX;
 
-fn keyboard_button(code: Scancode) -> Option<Buttons> {
+/// The desktop platform: files from [`Desktop`], sound from SDL, and the
+/// requests the main loop carries out after each update.
+struct SdlPlatform {
+    desktop: Desktop,
+    audio: Option<AudioQueue<i16>>,
+    requests: Vec<Request>,
+}
+
+impl Platform for SdlPlatform {
+    fn now_ms(&self) -> u64 {
+        self.desktop.now_ms()
+    }
+    fn log(&mut self, message: &str) {
+        self.desktop.log(message);
+    }
+    fn load(&mut self, file: gase_app::FileKey<'_>) -> Option<Vec<u8>> {
+        self.desktop.load(file)
+    }
+    fn store(&mut self, file: gase_app::FileKey<'_>, data: &[u8]) -> Result<String, String> {
+        self.desktop.store(file, data)
+    }
+    fn read_rom(&mut self, path: &str) -> Result<Vec<u8>, String> {
+        self.desktop.read_rom(path)
+    }
+    fn list_dir(&mut self, dir: Option<&str>) -> Result<gase_app::Listing, String> {
+        self.desktop.list_dir(dir)
+    }
+    fn audio_queued(&self) -> Option<usize> {
+        // The queue size is in bytes: 4 per stereo frame of i16.
+        self.audio.as_ref().map(|q| q.size() as usize / 4)
+    }
+    fn queue_audio(&mut self, samples: &[i16]) {
+        if let Some(queue) = &self.audio {
+            if let Err(e) = queue.queue_audio(samples) {
+                eprintln!("audio: {e}");
+            }
+        }
+    }
+    fn request(&mut self, request: Request) {
+        self.requests.push(request);
+    }
+}
+
+/// SDL scancode → the app's physical key.
+fn key(code: Scancode) -> Option<Key> {
+    use Scancode as S;
     Some(match code {
-        Scancode::Up => Buttons::UP,
-        Scancode::Down => Buttons::DOWN,
-        Scancode::Left => Buttons::LEFT,
-        Scancode::Right => Buttons::RIGHT,
-        Scancode::Z => Buttons::A,
-        Scancode::X => Buttons::B,
-        Scancode::C => Buttons::C,
-        Scancode::A => Buttons::X,
-        Scancode::S => Buttons::Y,
-        Scancode::D => Buttons::Z,
-        Scancode::Return => Buttons::START,
-        Scancode::Q => Buttons::MODE,
+        S::A => Key::A,
+        S::B => Key::B,
+        S::C => Key::C,
+        S::D => Key::D,
+        S::E => Key::E,
+        S::F => Key::F,
+        S::G => Key::G,
+        S::H => Key::H,
+        S::I => Key::I,
+        S::J => Key::J,
+        S::K => Key::K,
+        S::L => Key::L,
+        S::M => Key::M,
+        S::N => Key::N,
+        S::O => Key::O,
+        S::P => Key::P,
+        S::Q => Key::Q,
+        S::R => Key::R,
+        S::S => Key::S,
+        S::T => Key::T,
+        S::U => Key::U,
+        S::V => Key::V,
+        S::W => Key::W,
+        S::X => Key::X,
+        S::Y => Key::Y,
+        S::Z => Key::Z,
+        S::Num0 => Key::Num0,
+        S::Num1 => Key::Num1,
+        S::Num2 => Key::Num2,
+        S::Num3 => Key::Num3,
+        S::Num4 => Key::Num4,
+        S::Num5 => Key::Num5,
+        S::Num6 => Key::Num6,
+        S::Num7 => Key::Num7,
+        S::Num8 => Key::Num8,
+        S::Num9 => Key::Num9,
+        S::F1 => Key::F1,
+        S::F2 => Key::F2,
+        S::F3 => Key::F3,
+        S::F4 => Key::F4,
+        S::F5 => Key::F5,
+        S::F6 => Key::F6,
+        S::F7 => Key::F7,
+        S::F8 => Key::F8,
+        S::F9 => Key::F9,
+        S::F10 => Key::F10,
+        S::F11 => Key::F11,
+        S::F12 => Key::F12,
+        S::Up => Key::Up,
+        S::Down => Key::Down,
+        S::Left => Key::Left,
+        S::Right => Key::Right,
+        S::Return => Key::Enter,
+        S::Escape => Key::Escape,
+        S::Backspace => Key::Backspace,
+        S::Tab => Key::Tab,
+        S::Space => Key::Space,
+        S::Insert => Key::Insert,
+        S::Delete => Key::Delete,
+        S::Home => Key::Home,
+        S::End => Key::End,
+        S::PageUp => Key::PageUp,
+        S::PageDown => Key::PageDown,
+        S::LShift => Key::LeftShift,
+        S::RShift => Key::RightShift,
+        S::LCtrl => Key::LeftCtrl,
+        S::RCtrl => Key::RightCtrl,
+        S::LAlt => Key::LeftAlt,
+        S::RAlt => Key::RightAlt,
+        S::Minus => Key::Minus,
+        S::Equals => Key::Equals,
+        S::LeftBracket => Key::LeftBracket,
+        S::RightBracket => Key::RightBracket,
+        S::Backslash => Key::Backslash,
+        S::Semicolon => Key::Semicolon,
+        S::Apostrophe => Key::Apostrophe,
+        S::Grave => Key::Grave,
+        S::Comma => Key::Comma,
+        S::Period => Key::Period,
+        S::Slash => Key::Slash,
+        S::Kp0 => Key::Kp0,
+        S::Kp1 => Key::Kp1,
+        S::Kp2 => Key::Kp2,
+        S::Kp3 => Key::Kp3,
+        S::Kp4 => Key::Kp4,
+        S::Kp5 => Key::Kp5,
+        S::Kp6 => Key::Kp6,
+        S::Kp7 => Key::Kp7,
+        S::Kp8 => Key::Kp8,
+        S::Kp9 => Key::Kp9,
+        S::KpEnter => Key::KpEnter,
+        S::KpPlus => Key::KpPlus,
+        S::KpMinus => Key::KpMinus,
+        S::KpMultiply => Key::KpMultiply,
+        S::KpDivide => Key::KpDivide,
+        S::KpPeriod => Key::KpPeriod,
         _ => return None,
     })
 }
 
-/// Pad buttons follow the physical layout: the bottom row of a modern pad
-/// (X, A, B on an Xbox layout) is the Mega Drive's A, B, C.
-fn pad_button(button: Button) -> Option<Buttons> {
+/// SDL GameController buttons are already the standard layout.
+fn pad_button(button: Button) -> Option<PadButton> {
     Some(match button {
-        Button::DPadUp => Buttons::UP,
-        Button::DPadDown => Buttons::DOWN,
-        Button::DPadLeft => Buttons::LEFT,
-        Button::DPadRight => Buttons::RIGHT,
-        Button::X => Buttons::A,
-        Button::A => Buttons::B,
-        Button::B => Buttons::C,
-        Button::LeftShoulder => Buttons::X,
-        Button::Y => Buttons::Y,
-        Button::RightShoulder => Buttons::Z,
-        Button::Start => Buttons::START,
-        Button::Back => Buttons::MODE,
+        Button::A => PadButton::South,
+        Button::B => PadButton::East,
+        Button::X => PadButton::West,
+        Button::Y => PadButton::North,
+        Button::Back => PadButton::Back,
+        Button::Guide => PadButton::Guide,
+        Button::Start => PadButton::Start,
+        Button::LeftStick => PadButton::LeftStick,
+        Button::RightStick => PadButton::RightStick,
+        Button::LeftShoulder => PadButton::LeftShoulder,
+        Button::RightShoulder => PadButton::RightShoulder,
+        Button::DPadUp => PadButton::DPadUp,
+        Button::DPadDown => PadButton::DPadDown,
+        Button::DPadLeft => PadButton::DPadLeft,
+        Button::DPadRight => PadButton::DPadRight,
+        Button::Misc1 => PadButton::Misc,
         _ => return None,
     })
 }
 
-/// A connected game controller and the player it controls.
-struct Pad {
-    controller: GameController,
-    buttons: Buttons,
-    stick: Buttons,
-}
-
-/// Frontend state that is not part of the emulated console.
-struct Frontend {
-    session: Session,
-    keyboard: Buttons,
-    pads: Vec<Pad>,
-    paused: bool,
-    step_frame: bool,
-    fast_forward: bool,
-    rewinding: bool,
-    muted: bool,
-    slot: u8,
-    rewind: Rewind,
-    message: Option<(String, Instant)>,
-    debug: Debugger,
-    panel: Panel,
-    /// The debugger window is shown.
-    debug_open: bool,
-    /// A debugger command to run while paused.
-    debug_command: Option<Action>,
+fn pad_axis(axis: Axis) -> PadAxis {
+    match axis {
+        Axis::LeftX => PadAxis::LeftX,
+        Axis::LeftY => PadAxis::LeftY,
+        Axis::RightX => PadAxis::RightX,
+        Axis::RightY => PadAxis::RightY,
+        Axis::TriggerLeft => PadAxis::LeftTrigger,
+        Axis::TriggerRight => PadAxis::RightTrigger,
+    }
 }
 
 /// Translate a key for the debugger panel.
-fn debugger_key(code: Scancode, keycode: Option<Keycode>) -> Option<Key> {
+fn debugger_key(code: Scancode, keycode: Option<Keycode>) -> Option<debugger::Key> {
+    use debugger::Key as K;
     Some(match code {
-        Scancode::Up => Key::Up,
-        Scancode::Down => Key::Down,
-        Scancode::PageDown => Key::PageDown,
-        Scancode::Home => Key::Home,
-        Scancode::Return | Scancode::KpEnter => Key::Enter,
-        Scancode::Backspace => Key::Backspace,
-        Scancode::Escape => Key::Escape,
+        Scancode::Up => K::Up,
+        Scancode::Down => K::Down,
+        Scancode::PageDown => K::PageDown,
+        Scancode::Home => K::Home,
+        Scancode::Return | Scancode::KpEnter => K::Enter,
+        Scancode::Backspace => K::Backspace,
+        Scancode::Escape => K::Escape,
         _ => {
             // Printable keys: SDL key codes are their (lower-case) characters,
             // so this follows the keyboard layout.
@@ -124,210 +261,329 @@ fn debugger_key(code: Scancode, keycode: Option<Keycode>) -> Option<Key> {
             if !(' '..='~').contains(&c) {
                 return None;
             }
-            Key::Char(c.to_ascii_lowercase())
+            K::Char(c.to_ascii_lowercase())
         }
     })
 }
 
-impl Frontend {
-    fn notify(&mut self, text: impl Into<String>) {
-        let text = text.into();
-        eprintln!("{text}");
-        self.message = Some((text, Instant::now()));
-    }
+/// The debugger window and its state.
+struct DebugWindow {
+    canvas: WindowCanvas,
+    panel: Panel,
+    open: bool,
+    shown: bool,
+}
 
-    fn update_inputs(&mut self) {
-        let mut players = [self.keyboard, Buttons::default()];
-        for (i, pad) in self.pads.iter().enumerate().take(2) {
-            players[i] = players[i] | pad.buttons | pad.stick;
-        }
-        for (port, buttons) in players.into_iter().enumerate() {
-            self.session.genesis.set_buttons(port, buttons);
-        }
-    }
-
-    fn toggle_debugger(&mut self) {
-        self.debug_open = !self.debug_open;
-        if self.debug_open {
-            self.panel.follow_pc();
-        }
-    }
-
-    /// Run a debugger command (the console is paused).
-    fn run_debug_command(&mut self, action: Action) {
-        let genesis = &mut self.session.genesis;
-        let stop = match action {
-            Action::Step => self.debug.step_instruction(genesis),
-            Action::StepFrame => self.debug.run_frame(genesis),
-            Action::RunToVBlank => self.debug.run_to_vblank(genesis),
-            _ => return,
+impl DebugWindow {
+    /// Handle a key pressed in the debugger window.
+    fn key(&mut self, app: &mut App, key: debugger::Key) {
+        let Some(game) = app.game_mut() else {
+            return;
         };
-        self.session.print_trace();
-        if stop == Stop::FrameEnd {
-            self.rewind.record(&self.session.genesis);
+        let what = match self.panel.key(key, &mut game.genesis, &mut game.debugger) {
+            Action::None => return,
+            Action::Close => {
+                self.open = false;
+                return;
+            }
+            Action::TogglePause => {
+                game.paused = !game.paused;
+                return;
+            }
+            Action::Step => DebugRun::Instruction,
+            Action::StepFrame => DebugRun::Frame,
+            Action::RunToVBlank => DebugRun::VBlank,
+        };
+        let stop = game.debug_run(what);
+        for line in game.genesis.take_trace() {
+            println!("{line}");
         }
         self.panel.set_status(match stop {
             Stop::Stepped => "Stepped one instruction".to_string(),
-            Stop::FrameEnd => format!("Frame {} done", self.session.genesis.frame_count()),
+            Stop::FrameEnd => format!("Frame {} done", game.genesis.frame_count()),
             Stop::Breakpoint(pc) => format!("Breakpoint at ${pc:06X}"),
             Stop::VBlank => "Vertical interrupt raised: S steps into the handler".to_string(),
         });
         self.panel.follow_pc();
     }
 
-    /// Handle a key pressed in the debugger window.
-    fn debugger_key(&mut self, key: Key) {
-        match self
-            .panel
-            .key(key, &mut self.session.genesis, &mut self.debug)
-        {
-            Action::None => {}
-            Action::Close => self.debug_open = false,
-            Action::TogglePause => self.toggle_pause(),
-            command => {
-                self.paused = true;
-                self.debug_command = Some(command);
+    fn draw(&mut self, app: &App, texture: &mut Texture<'_>) -> Result<(), String> {
+        if self.open != self.shown {
+            let window = self.canvas.window_mut();
+            if self.open {
+                window.show();
+                window.raise();
+            } else {
+                window.hide();
             }
+            self.shown = self.open;
         }
-    }
-
-    fn toggle_pause(&mut self) {
-        self.paused = !self.paused;
-        self.notify(if self.paused { "Paused" } else { "Resumed" });
-    }
-
-    fn pad_index(&self, instance: u32) -> Option<usize> {
-        self.pads
-            .iter()
-            .position(|p| p.controller.instance_id() == instance)
-    }
-
-    /// Handle a hotkey; returns false to quit.
-    fn hotkey(&mut self, code: Scancode, canvas: &mut sdl2::render::WindowCanvas) -> bool {
-        match code {
-            Scancode::Escape => return false,
-            Scancode::P => self.toggle_pause(),
-            Scancode::F1 | Scancode::Grave => self.toggle_debugger(),
-            Scancode::N if self.paused => self.step_frame = true,
-            Scancode::M => {
-                self.muted = !self.muted;
-                self.notify(if self.muted { "Sound off" } else { "Sound on" });
-            }
-            Scancode::F5 if self.debug.in_frame() => {
-                self.notify("Stopped mid-frame: finish the frame first (F in the debugger)");
-            }
-            Scancode::F5 => match self.session.save_state(self.slot) {
-                Ok(_) => self.notify(format!("Saved state to slot {}", self.slot)),
-                Err(e) => self.notify(e),
-            },
-            Scancode::F8 => match self.session.load_state(self.slot) {
-                Ok(_) => {
-                    self.rewind.clear();
-                    self.debug.forget_position();
-                    self.notify(format!("Loaded state from slot {}", self.slot));
-                }
-                Err(e) => self.notify(e),
-            },
-            Scancode::F6 => {
-                self.slot = (self.slot + 9) % 10;
-                self.notify(format!("Slot {}", self.slot));
-            }
-            Scancode::F7 => {
-                self.slot = (self.slot + 1) % 10;
-                self.notify(format!("Slot {}", self.slot));
-            }
-            Scancode::F9 => {
-                self.session.genesis.reset();
-                self.notify("Reset");
-            }
-            Scancode::F11 => {
-                let window = canvas.window_mut();
-                let next = if window.fullscreen_state() == FullscreenType::Off {
-                    FullscreenType::Desktop
-                } else {
-                    FullscreenType::Off
-                };
-                if let Err(e) = window.set_fullscreen(next) {
-                    self.notify(format!("Fullscreen failed: {e}"));
-                }
-            }
-            Scancode::F12 => match self.session.screenshot(None) {
-                Ok(path) => self.notify(format!("Saved {}", path.display())),
-                Err(e) => self.notify(e),
-            },
-            _ => {}
-        }
-        true
+        let Some(game) = app.game().filter(|_| self.open) else {
+            return Ok(());
+        };
+        let picture = self.panel.draw(&game.genesis, &game.debugger, game.paused);
+        upload(
+            texture,
+            &picture.pixels,
+            (picture.width, picture.height, picture.width),
+            true,
+        )?;
+        let (ww, wh) = self.canvas.output_size()?;
+        let scale =
+            (f64::from(ww) / debugger::WIDTH as f64).min(f64::from(wh) / debugger::HEIGHT as f64);
+        let (w, h) = (
+            (debugger::WIDTH as f64 * scale) as u32,
+            (debugger::HEIGHT as f64 * scale) as u32,
+        );
+        self.canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+        self.canvas.clear();
+        self.canvas.copy(
+            texture,
+            None,
+            SdlRect::new(
+                ((ww - w.min(ww)) / 2) as i32,
+                ((wh - h.min(wh)) / 2) as i32,
+                w.max(1),
+                h.max(1),
+            ),
+        )?;
+        self.canvas.present();
+        Ok(())
     }
 }
 
-/// Where to draw the picture inside a window of `window` size.
-///
-/// The console's pixels are not square: the picture always fills a
-/// 320×224 (10:7) area whether the game uses 256 or 320 pixels per line, as
-/// on a television.
-fn display_rect(window: (u32, u32), lines: u32, integer: bool) -> Rect {
-    let (ww, wh) = window;
-    let (base_w, base_h) = (320.0, f64::from(lines));
-    let mut scale = (f64::from(ww) / base_w).min(f64::from(wh) / base_h);
-    if integer && scale >= 1.0 {
-        scale = scale.floor();
+/// Copy `0xAARRGGBB` pixels into a streaming ARGB8888 texture (opaque
+/// pictures have alpha 0 in their top byte, so `force_opaque` sets it).
+fn upload(
+    texture: &mut Texture<'_>,
+    pixels: &[u32],
+    (width, height, stride): (usize, usize, usize),
+    force_opaque: bool,
+) -> Result<(), String> {
+    let mask = if force_opaque { 0xFF00_0000 } else { 0 };
+    let area = SdlRect::new(0, 0, width as u32, height as u32);
+    texture
+        .with_lock(area, |buffer, pitch| {
+            for (src, dst) in pixels
+                .chunks(stride)
+                .zip(buffer.chunks_mut(pitch))
+                .take(height)
+            {
+                for (d, &s) in dst.chunks_exact_mut(4).zip(&src[..width]) {
+                    d.copy_from_slice(&(s | mask).to_ne_bytes());
+                }
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// The window's drawable size and density, as the app wants them.
+fn resized(canvas: &WindowCanvas) -> Result<Event, String> {
+    let (w, h) = canvas.output_size()?;
+    let (points, _) = canvas.window().size();
+    Ok(Event::Resized {
+        width: w,
+        height: h,
+        pixels_per_point: w as f32 / points.max(1) as f32,
+    })
+}
+
+/// A mouse event; SDL gives window coordinates in points, the app wants
+/// pixels (they differ on high-density displays).
+fn mouse(canvas: &WindowCanvas, phase: PointerPhase, x: i32, y: i32) -> Event {
+    let (pw, ph) = canvas.output_size().unwrap_or((1, 1));
+    let (ww, wh) = canvas.window().size();
+    Event::Pointer {
+        id: 0,
+        kind: PointerKind::Mouse,
+        phase,
+        x: x as f32 * pw as f32 / ww.max(1) as f32,
+        y: y as f32 * ph as f32 / wh.max(1) as f32,
     }
-    let (w, h) = ((base_w * scale) as u32, (base_h * scale) as u32);
-    Rect::new(
-        ((ww - w) / 2) as i32,
-        ((wh - h) / 2) as i32,
-        w.max(1),
-        h.max(1),
-    )
+}
+
+/// A finger event; SDL gives positions from 0 to 1 across the window.
+fn finger(canvas: &WindowCanvas, phase: PointerPhase, id: i64, x: f32, y: f32) -> Option<Event> {
+    let (w, h) = canvas.output_size().ok()?;
+    Some(Event::Pointer {
+        id: id as u64,
+        kind: PointerKind::Touch,
+        phase,
+        x: x * w as f32,
+        y: y * h as f32,
+    })
+}
+
+/// Translate one SDL event. `Err(())` means "quit".
+fn translate(
+    event: &SdlEvent,
+    canvas: &WindowCanvas,
+    main_window: u32,
+) -> Result<Option<Event>, ()> {
+    Ok(match *event {
+        SdlEvent::Quit { .. } => return Err(()),
+        SdlEvent::KeyDown {
+            scancode: Some(code),
+            repeat,
+            ..
+        } => key(code).map(|key| Event::Key {
+            key,
+            pressed: true,
+            repeat,
+        }),
+        SdlEvent::KeyUp {
+            scancode: Some(code),
+            ..
+        } => key(code).map(|key| Event::Key {
+            key,
+            pressed: false,
+            repeat: false,
+        }),
+        SdlEvent::ControllerButtonDown { which, button, .. } => {
+            pad_button(button).map(|button| Event::PadButton {
+                pad: which,
+                button,
+                pressed: true,
+            })
+        }
+        SdlEvent::ControllerButtonUp { which, button, .. } => {
+            pad_button(button).map(|button| Event::PadButton {
+                pad: which,
+                button,
+                pressed: false,
+            })
+        }
+        SdlEvent::ControllerAxisMotion {
+            which, axis, value, ..
+        } => Some(Event::PadAxis {
+            pad: which,
+            axis: pad_axis(axis),
+            value: f32::from(value) / 32767.0,
+        }),
+        SdlEvent::MouseButtonDown {
+            window_id,
+            which,
+            mouse_btn: MouseButton::Left,
+            x,
+            y,
+            ..
+        } if window_id == main_window && which != TOUCH_MOUSE_ID => {
+            Some(mouse(canvas, PointerPhase::Down, x, y))
+        }
+        SdlEvent::MouseButtonUp {
+            window_id,
+            which,
+            mouse_btn: MouseButton::Left,
+            x,
+            y,
+            ..
+        } if window_id == main_window && which != TOUCH_MOUSE_ID => {
+            Some(mouse(canvas, PointerPhase::Up, x, y))
+        }
+        SdlEvent::MouseMotion {
+            window_id,
+            which,
+            x,
+            y,
+            ..
+        } if window_id == main_window && which != TOUCH_MOUSE_ID => {
+            Some(mouse(canvas, PointerPhase::Move, x, y))
+        }
+        SdlEvent::MouseWheel {
+            window_id,
+            precise_y,
+            ..
+        } if window_id == main_window => Some(Event::Wheel { lines: precise_y }),
+        SdlEvent::FingerDown {
+            finger_id, x, y, ..
+        } => finger(canvas, PointerPhase::Down, finger_id, x, y),
+        SdlEvent::FingerMotion {
+            finger_id, x, y, ..
+        } => finger(canvas, PointerPhase::Move, finger_id, x, y),
+        SdlEvent::FingerUp {
+            finger_id, x, y, ..
+        } => finger(canvas, PointerPhase::Up, finger_id, x, y),
+        SdlEvent::DropFile { ref filename, .. } => Some(Event::OpenRom {
+            path: filename.clone(),
+        }),
+        SdlEvent::AppWillEnterBackground { .. } => Some(Event::Suspend),
+        SdlEvent::Window {
+            window_id,
+            win_event,
+            ..
+        } if window_id == main_window => match win_event {
+            WindowEvent::Close => return Err(()),
+            WindowEvent::SizeChanged(..) | WindowEvent::Resized(..) => resized(canvas).ok(),
+            WindowEvent::FocusLost => Some(Event::FocusLost),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 pub fn run(options: &Options) -> Result<(), String> {
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
     let controllers = sdl.game_controller()?;
-    let session = Session::open(options, SAMPLE_RATE)?;
-    eprintln!("{}", session.describe());
-    let title = format!("gase - {}", session.title());
 
+    let audio = if options.audio {
+        let spec = AudioSpecDesired {
+            freq: Some(SAMPLE_RATE as i32),
+            channels: Some(2),
+            samples: Some(512),
+        };
+        let queue = sdl.audio()?.open_queue::<i16, _>(None, &spec)?;
+        queue.resume();
+        Some(queue)
+    } else {
+        None
+    };
+    let mut platform = SdlPlatform {
+        desktop: Desktop::new(),
+        audio,
+        requests: Vec::new(),
+    };
+    let caps = Capabilities {
+        sample_rate: SAMPLE_RATE,
+        touch_screen: sdl2::touch::num_touch_devices() > 0,
+        file_browser: true,
+        rom_picker: false,
+        drop_files: true,
+        can_quit: true,
+        fullscreen: true,
+        debugger: true,
+        keyboard: true,
+    };
+    let mut app = App::new(&mut platform, caps);
+    crate::apply_overrides(&mut app, options);
+
+    let scale = app.settings().video.scale;
     let window = video
-        .window(&title, 320 * options.scale, 224 * options.scale)
+        .window("gase", 320 * scale, 224 * scale)
         .position_centered()
         .resizable()
         .allow_highdpi()
         .build()
         .map_err(|e| e.to_string())?;
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    if options.fullscreen {
+    if app.settings().video.fullscreen {
         canvas
             .window_mut()
             .set_fullscreen(FullscreenType::Desktop)?;
     }
     let creator = canvas.texture_creator();
-    let mut texture = creator
+    let mut game_texture = creator
         .create_texture_streaming(
             PixelFormatEnum::ARGB8888,
             gase_core::MAX_WIDTH as u32,
             gase_core::MAX_HEIGHT as u32,
         )
         .map_err(|e| e.to_string())?;
-
-    let audio: Option<AudioQueue<i16>> = if options.audio {
-        let audio = sdl.audio()?;
-        let spec = AudioSpecDesired {
-            freq: Some(SAMPLE_RATE as i32),
-            channels: Some(2),
-            samples: Some(512),
-        };
-        let queue = audio.open_queue::<i16, _>(None, &spec)?;
-        queue.resume();
-        Some(queue)
-    } else {
-        None
-    };
+    // Created at the overlay's size, and again when that changes.
+    let mut overlay_texture: Option<(Texture<'_>, (usize, usize))> = None;
 
     // The debugger window is created hidden and shown with F1.
-    let mut debug_canvas = video
+    let debug_canvas = video
         .window(
             "gase debugger",
             debugger::WIDTH as u32,
@@ -352,351 +608,197 @@ pub fn run(options: &Options) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let debug_window_id = debug_canvas.window().id();
     let main_window_id = canvas.window().id();
-    let mut debug_shown = false;
-
-    let frame_rate = session.genesis.frame_rate();
-    let mut debug = Debugger::new();
-    for &addr in &options.breakpoints {
-        debug.add_breakpoint(addr);
-    }
-    let mut fe = Frontend {
-        session,
-        keyboard: Buttons::default(),
-        pads: Vec::new(),
-        paused: false,
-        step_frame: false,
-        fast_forward: false,
-        rewinding: false,
-        muted: false,
-        slot: 0,
-        rewind: Rewind::new(20, 4, frame_rate),
-        message: None,
-        debug,
+    let mut dbg = DebugWindow {
+        canvas: debug_canvas,
         panel: Panel::new(),
-        debug_open: options.debug,
-        debug_command: None,
+        open: false,
+        shown: false,
     };
-    fe.paused = options.debug;
+
+    app.handle(&mut platform, resized(&canvas)?);
+    if let Some(rom) = &options.rom {
+        // A ROM named on the command line that does not load is an error,
+        // as it always was: the user is looking at a terminal.
+        app.open_rom(&mut platform, &rom.to_string_lossy())?;
+        if let Some(game) = app.game_mut() {
+            game.genesis.set_trace(options.trace);
+            for &addr in &options.breakpoints {
+                game.debugger.add_breakpoint(addr);
+            }
+            if options.debug {
+                game.paused = true;
+                dbg.open = true;
+            }
+        }
+    }
 
     let mut events = sdl.event_pump()?;
-    let mut samples = Vec::with_capacity(4096);
-    let frame_time = Duration::from_secs_f64(1.0 / frame_rate);
+    let mut pads: Vec<GameController> = Vec::new();
     let mut next_deadline = Instant::now();
-    let mut last_save_flush = Instant::now();
-    let mut shown_title = String::new();
 
     'main: loop {
+        // --- 1. Events in ----------------------------------------------------------
         for event in events.poll_iter() {
             match event {
-                Event::Quit { .. } => break 'main,
-                Event::KeyDown {
+                // Keys typed into the debugger window are its own.
+                SdlEvent::KeyDown {
                     scancode: Some(code),
                     keycode,
                     window_id,
                     ..
-                } if fe.debug_open && window_id == debug_window_id => {
+                } if dbg.open && window_id == debug_window_id => {
                     if matches!(code, Scancode::F1 | Scancode::Grave) {
-                        fe.debug_open = false;
-                    } else if let Some(key) = debugger_key(code, keycode) {
+                        dbg.open = false;
+                    } else if let Some(k) = debugger_key(code, keycode) {
                         // Key repeat is welcome here: hold S to keep stepping.
-                        fe.debugger_key(key);
+                        dbg.key(&mut app, k);
                     }
                 }
-                Event::KeyDown {
-                    scancode: Some(code),
-                    repeat,
-                    ..
-                } => {
-                    if let Some(b) = keyboard_button(code) {
-                        fe.keyboard.set(b, true);
-                    } else if code == Scancode::Tab {
-                        fe.fast_forward = true;
-                    } else if code == Scancode::Backspace {
-                        fe.rewinding = true;
-                    } else if !repeat && !fe.hotkey(code, &mut canvas) {
-                        break 'main;
-                    }
-                }
-                Event::KeyUp {
-                    scancode: Some(code),
-                    ..
-                } => {
-                    if let Some(b) = keyboard_button(code) {
-                        fe.keyboard.set(b, false);
-                    } else if code == Scancode::Tab {
-                        fe.fast_forward = false;
-                    } else if code == Scancode::Backspace {
-                        fe.rewinding = false;
-                    }
-                }
-                Event::ControllerDeviceAdded { which, .. } => {
-                    if let Ok(controller) = controllers.open(which) {
-                        let name = controller.name();
-                        fe.pads.push(Pad {
-                            controller,
-                            buttons: Buttons::default(),
-                            stick: Buttons::default(),
-                        });
-                        fe.notify(format!(
-                            "Controller connected: {name} (player {})",
-                            fe.pads.len().min(2)
-                        ));
-                    }
-                }
-                Event::ControllerDeviceRemoved { which, .. } => {
-                    if let Some(i) = fe.pad_index(which) {
-                        fe.pads.remove(i);
-                        fe.notify("Controller disconnected");
-                    }
-                }
-                Event::ControllerButtonDown { which, button, .. }
-                | Event::ControllerButtonUp { which, button, .. } => {
-                    let pressed = matches!(event, Event::ControllerButtonDown { .. });
-                    if let (Some(i), Some(b)) = (fe.pad_index(which), pad_button(button)) {
-                        fe.pads[i].buttons.set(b, pressed);
-                    }
-                }
-                Event::ControllerAxisMotion {
-                    which, axis, value, ..
-                } => {
-                    if let Some(i) = fe.pad_index(which) {
-                        const DEAD_ZONE: i16 = 12_000;
-                        let stick = &mut fe.pads[i].stick;
-                        match axis {
-                            Axis::LeftX => {
-                                stick.set(Buttons::LEFT, value < -DEAD_ZONE);
-                                stick.set(Buttons::RIGHT, value > DEAD_ZONE);
-                            }
-                            Axis::LeftY => {
-                                stick.set(Buttons::UP, value < -DEAD_ZONE);
-                                stick.set(Buttons::DOWN, value > DEAD_ZONE);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Event::Window {
+                SdlEvent::Window {
                     window_id,
                     win_event: WindowEvent::Close,
                     ..
-                } => {
-                    if window_id == main_window_id {
-                        break 'main;
+                } if window_id == debug_window_id => dbg.open = false,
+                // Pads must be opened (and kept) to receive their events.
+                SdlEvent::ControllerDeviceAdded { which, .. } => match controllers.open(which) {
+                    Ok(controller) => {
+                        let event = Event::PadConnected {
+                            pad: controller.instance_id(),
+                            name: controller.name(),
+                        };
+                        pads.push(controller);
+                        app.handle(&mut platform, event);
                     }
-                    fe.debug_open = false;
+                    Err(e) => eprintln!("Cannot open controller: {e}"),
+                },
+                SdlEvent::ControllerDeviceRemoved { which, .. } => {
+                    pads.retain(|p| p.instance_id() != which);
+                    app.handle(&mut platform, Event::PadDisconnected { pad: which });
                 }
-                Event::Window {
-                    win_event: WindowEvent::FocusLost,
-                    ..
-                } => {
-                    // Avoid stuck keys when the window loses focus.
-                    fe.keyboard = Buttons::default();
-                }
-                _ => {}
+                other => match translate(&other, &canvas, main_window_id) {
+                    Ok(Some(event)) => app.handle(&mut platform, event),
+                    Ok(None) => {}
+                    Err(()) => break 'main,
+                },
             }
         }
-        fe.update_inputs();
 
-        // --- Emulate ---------------------------------------------------------
-        if let Some(command) = fe.debug_command.take() {
-            fe.run_debug_command(command);
-        }
-        let run = !fe.paused || std::mem::take(&mut fe.step_frame);
-        if run {
-            if fe.rewinding {
-                if fe.rewind.step_back(&mut fe.session.genesis) {
-                    fe.debug.forget_position();
-                    fe.session.genesis.run_frame();
-                }
-            } else {
-                let count = if fe.fast_forward {
-                    FAST_FORWARD_FRAMES
-                } else {
-                    1
-                };
-                for _ in 0..count {
-                    // The fast path, unless the debugger has work to do.
-                    if fe.debug.breakpoints().is_empty() && !fe.debug.in_frame() {
-                        fe.session.genesis.run_frame();
-                    } else if let Stop::Breakpoint(pc) = fe.debug.run_frame(&mut fe.session.genesis)
-                    {
-                        fe.session.print_trace();
-                        fe.paused = true;
-                        fe.debug_open = true;
-                        fe.panel.follow_pc();
-                        fe.panel.set_status(format!("Breakpoint at ${pc:06X}"));
-                        fe.notify(format!("Breakpoint at ${pc:06X}"));
-                        break;
-                    }
-                    fe.rewind.record(&fe.session.genesis);
-                    fe.session.print_trace();
-                }
+        // --- 2. Update ----------------------------------------------------------------
+        let pacing = app.update(&mut platform);
+        if let Some(game) = app.game_mut() {
+            for line in game.genesis.take_trace() {
+                println!("{line}");
             }
         }
-        samples.clear();
-        fe.session.genesis.drain_audio(&mut samples);
 
-        // --- Audio and pacing --------------------------------------------------
-        let normal_speed = run && !fe.fast_forward && !fe.rewinding;
-        match &audio {
-            Some(queue) if normal_speed => {
-                let queued = queue.size() / 4; // stereo i16 frames
-                // Dynamic rate control: ±0.5% depending on the fill level.
-                let error = (f64::from(TARGET_QUEUE) - f64::from(queued)) / f64::from(TARGET_QUEUE);
-                fe.session
-                    .genesis
-                    .set_audio_speed(1.0 + 0.005 * error.clamp(-1.0, 1.0));
-                if fe.muted {
-                    samples.iter_mut().for_each(|s| *s = 0);
+        // --- 3. Requests -----------------------------------------------------------------
+        for request in std::mem::take(&mut platform.requests) {
+            match request {
+                Request::SetTitle(title) => canvas
+                    .window_mut()
+                    .set_title(&title)
+                    .map_err(|e| e.to_string())?,
+                Request::SetFullscreen(on) => {
+                    let mode = if on {
+                        FullscreenType::Desktop
+                    } else {
+                        FullscreenType::Off
+                    };
+                    if let Err(e) = canvas.window_mut().set_fullscreen(mode) {
+                        app.notify(format!("Fullscreen failed: {e}"));
+                    }
                 }
-                queue.queue_audio(&samples)?;
-                while queue.size() / 4 > TARGET_QUEUE {
+                Request::Quit => break 'main,
+                Request::ToggleDebugger => {
+                    dbg.open = !dbg.open;
+                    dbg.panel.follow_pc();
+                }
+                Request::Breakpoint(pc) => {
+                    dbg.open = true;
+                    dbg.panel.follow_pc();
+                    dbg.panel.set_status(format!("Breakpoint at ${pc:06X}"));
+                }
+                Request::PickRom => {}
+            }
+        }
+
+        // --- 4. Video out -------------------------------------------------------------------
+        let video = app.video();
+        let bg = video.background;
+        canvas.set_draw_color(sdl2::pixels::Color::RGB(
+            (bg >> 16) as u8,
+            (bg >> 8) as u8,
+            bg as u8,
+        ));
+        canvas.clear();
+        if let Some(frame) = video.game {
+            upload(
+                &mut game_texture,
+                frame.pixels,
+                (frame.width, frame.height, frame.stride),
+                true,
+            )?;
+            let r = video.game_rect;
+            canvas.copy(
+                &game_texture,
+                SdlRect::new(0, 0, frame.width as u32, frame.height as u32),
+                SdlRect::new(r.x, r.y, r.w.max(1) as u32, r.h.max(1) as u32),
+            )?;
+        }
+        if let Some(overlay) = video.overlay {
+            let size = (overlay.width, overlay.height);
+            let stale = overlay_texture.as_ref().is_none_or(|(_, s)| *s != size);
+            if stale {
+                let mut t = creator
+                    .create_texture_streaming(
+                        PixelFormatEnum::ARGB8888,
+                        size.0 as u32,
+                        size.1 as u32,
+                    )
+                    .map_err(|e| e.to_string())?;
+                t.set_blend_mode(BlendMode::Blend);
+                overlay_texture = Some((t, size));
+            }
+            if let Some((texture, _)) = &mut overlay_texture {
+                // Upload only when the app redrew it: usually never while
+                // playing, once per frame while a menu is open.
+                if stale || video.overlay_changed {
+                    upload(texture, &overlay.pixels, (size.0, size.1, size.0), false)?;
+                }
+                let s = video.overlay_scale as u32;
+                canvas.copy(
+                    texture,
+                    None,
+                    SdlRect::new(0, 0, size.0 as u32 * s, size.1 as u32 * s),
+                )?;
+            }
+        }
+        canvas.present();
+        dbg.draw(&app, &mut debug_texture)?;
+        if app.wants_quit() {
+            break;
+        }
+
+        // --- 5. Wait ----------------------------------------------------------------------------
+        match pacing {
+            Pacing::Audio { target } => {
+                while platform.audio_queued().is_some_and(|q| q > target) {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 next_deadline = Instant::now();
             }
-            _ => {
-                if fe.fast_forward && run {
-                    next_deadline = Instant::now();
+            Pacing::Timer { fps } => {
+                next_deadline += Duration::from_secs_f64(1.0 / fps);
+                let now = Instant::now();
+                if next_deadline > now {
+                    std::thread::sleep(next_deadline - now);
                 } else {
-                    // No audio pacing: sleep until the next frame is due.
-                    next_deadline += frame_time;
-                    let now = Instant::now();
-                    if next_deadline > now {
-                        std::thread::sleep(next_deadline - now);
-                    } else {
-                        next_deadline = now;
-                    }
+                    next_deadline = now;
                 }
             }
-        }
-
-        // --- Video ----------------------------------------------------------------
-        let frame = fe.session.genesis.frame();
-        texture
-            .with_lock(
-                Rect::new(0, 0, frame.width as u32, frame.height as u32),
-                |buffer, pitch| {
-                    for (y, row) in frame
-                        .pixels
-                        .chunks(frame.stride)
-                        .take(frame.height)
-                        .enumerate()
-                    {
-                        let line = &mut buffer[y * pitch..y * pitch + frame.width * 4];
-                        for (dst, &src) in line.chunks_exact_mut(4).zip(&row[..frame.width]) {
-                            dst.copy_from_slice(&(src | 0xFF00_0000).to_ne_bytes());
-                        }
-                    }
-                },
-            )
-            .map_err(|e| e.to_string())?;
-        let interlaced = frame.height > 240;
-        let lines = if interlaced {
-            frame.height / 2
-        } else {
-            frame.height
-        } as u32;
-        let target = display_rect(canvas.output_size()?, lines, options.integer_scale);
-        canvas.set_draw_color(sdl2::pixels::Color::BLACK);
-        canvas.clear();
-        canvas.copy(
-            &texture,
-            Rect::new(0, 0, frame.width as u32, frame.height as u32),
-            target,
-        )?;
-        canvas.present();
-
-        // --- Debugger window -------------------------------------------------------
-        if fe.debug_open != debug_shown {
-            let window = debug_canvas.window_mut();
-            if fe.debug_open {
-                window.show();
-                window.raise();
-            } else {
-                window.hide();
-            }
-            debug_shown = fe.debug_open;
-        }
-        if fe.debug_open {
-            let picture = fe.panel.draw(&fe.session.genesis, &fe.debug, fe.paused);
-            debug_texture
-                .with_lock(None, |buffer, pitch| {
-                    for (row, line) in picture
-                        .pixels
-                        .chunks(picture.width)
-                        .zip(buffer.chunks_mut(pitch))
-                    {
-                        for (dst, &src) in line.chunks_exact_mut(4).zip(row) {
-                            dst.copy_from_slice(&(src | 0xFF00_0000).to_ne_bytes());
-                        }
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            let (ww, wh) = debug_canvas.output_size()?;
-            let scale = (f64::from(ww) / debugger::WIDTH as f64)
-                .min(f64::from(wh) / debugger::HEIGHT as f64);
-            let (w, h) = (
-                (debugger::WIDTH as f64 * scale) as u32,
-                (debugger::HEIGHT as f64 * scale) as u32,
-            );
-            debug_canvas.set_draw_color(sdl2::pixels::Color::BLACK);
-            debug_canvas.clear();
-            debug_canvas.copy(
-                &debug_texture,
-                None,
-                Rect::new(
-                    ((ww - w.min(ww)) / 2) as i32,
-                    ((wh - h.min(wh)) / 2) as i32,
-                    w.max(1),
-                    h.max(1),
-                ),
-            )?;
-            debug_canvas.present();
-        }
-
-        // --- Housekeeping ----------------------------------------------------------
-        let mut status = title.clone();
-        if fe.paused {
-            status.push_str(" [paused]");
-        } else if fe.fast_forward {
-            status.push_str(" [fast forward]");
-        } else if fe.rewinding {
-            status.push_str(" [rewind]");
-        }
-        if let Some((text, since)) = &fe.message {
-            if since.elapsed() < MESSAGE_TIME {
-                status = format!("{status} - {text}");
-            } else {
-                fe.message = None;
-            }
-        }
-        if status != shown_title {
-            canvas
-                .window_mut()
-                .set_title(&status)
-                .map_err(|e| e.to_string())?;
-            shown_title = status;
-        }
-        if last_save_flush.elapsed() > Duration::from_secs(5) {
-            fe.session.flush_save();
-            last_save_flush = Instant::now();
+            Pacing::Unthrottled => next_deadline = Instant::now(),
         }
     }
+    app.shutdown(&mut platform);
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn display_rect_letterboxes() {
-        // A 4:3 window shows the 10:7 picture with bars above and below.
-        let r = display_rect((1024, 768), 224, false);
-        assert_eq!((r.width(), r.x()), (1024, 0));
-        assert!(r.y() > 0);
-        let r = display_rect((1000, 700), 224, true);
-        assert_eq!((r.width(), r.height()), (960, 672));
-    }
 }

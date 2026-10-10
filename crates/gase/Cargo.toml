@@ -18,6 +18,7 @@ sdl = ["dep:sdl2"]
 
 [dependencies]
 gase-core.workspace = true
+gase-app.workspace = true
 sdl2 = { version = "0.37", optional = true }
 
 [lints]

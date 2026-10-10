@@ -18,6 +18,7 @@ gase-z80 = { path = "crates/z80" }
 gase-sound = { path = "crates/sound" }
 gase-vdp = { path = "crates/vdp" }
 gase-core = { path = "crates/core" }
+gase-app = { path = "crates/app" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

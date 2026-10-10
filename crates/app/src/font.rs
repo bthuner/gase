@@ -1,11 +1,13 @@
-//! A tiny 8×8 bitmap font for the debugger, so the frontend needs no font
-//! library.
+//! A tiny 8×8 bitmap font, so the user interface and the debugger need no
+//! font library.
 //!
 //! The glyphs are the printable ASCII range (`0x20`-`0x7F`) of Daniel
 //! Hepper's **font8x8** "basic" set (`font8x8_basic.h`), which its author
 //! released into the **public domain**. It is derived from the public-domain
 //! 8×8 font of the "mos3" hobby operating system, itself modelled on the IBM
-//! PC BIOS font.
+//! PC BIOS font. A few extra symbols for the menus (arrows, an ellipsis, a
+//! folder and a cartridge) were drawn for gase in the same style; see
+//! [`EXTRA`].
 //!
 //! # Format
 //!
@@ -20,7 +22,7 @@
 //!   0x33 = 0011_0011 → ##..##..
 //! ```
 
-use super::canvas::Canvas;
+use crate::canvas::Canvas;
 
 /// Width and height of a character cell in pixels.
 pub const GLYPH_SIZE: usize = 8;
@@ -127,31 +129,98 @@ const GLYPHS: [[u8; 8]; 96] = [
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // DEL
 ];
 
-/// The glyph for `c`; characters outside printable ASCII show as `?`.
+/// Symbols outside ASCII, in the same format.
+///
+/// `▶ ◀ ▲ ▼` mark adjustable values and scrolling, `…` shortens long
+/// names, `·` separates hints, and two private-use characters are icons:
+/// [`FOLDER`] and [`CARTRIDGE`].
+#[rustfmt::skip]
+pub const EXTRA: [(char, [u8; 8]); 8] = [
+    ('▶', [0x04, 0x0C, 0x1C, 0x3C, 0x1C, 0x0C, 0x04, 0x00]),
+    ('◀', [0x20, 0x30, 0x38, 0x3C, 0x38, 0x30, 0x20, 0x00]),
+    ('▲', [0x00, 0x00, 0x18, 0x3C, 0x7E, 0xFF, 0x00, 0x00]),
+    ('▼', [0x00, 0x00, 0xFF, 0x7E, 0x3C, 0x18, 0x00, 0x00]),
+    ('…', [0x00, 0x00, 0x00, 0x00, 0x00, 0xDB, 0xDB, 0x00]),
+    ('·', [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00]),
+    (FOLDER, [0x00, 0x07, 0xFF, 0x81, 0x81, 0x81, 0xFF, 0x00]),
+    (CARTRIDGE, [0x7E, 0x42, 0x5A, 0x5A, 0x42, 0x7E, 0x54, 0x00]),
+];
+
+/// A folder icon (a private-use character).
+pub const FOLDER: char = '\u{E000}';
+/// A cartridge icon (a private-use character).
+pub const CARTRIDGE: char = '\u{E001}';
+
+/// The glyph for `c`; characters without one show as `?`.
 #[must_use]
 pub fn glyph(c: char) -> &'static [u8; 8] {
-    let index = match u8::try_from(c) {
-        Ok(byte @ FIRST..=0x7F) => byte - FIRST,
-        _ => b'?' - FIRST,
-    };
-    &GLYPHS[usize::from(index)]
+    if let Ok(byte @ FIRST..=0x7F) = u8::try_from(c) {
+        return &GLYPHS[usize::from(byte - FIRST)];
+    }
+    match EXTRA.iter().find(|(symbol, _)| *symbol == c) {
+        Some((_, bits)) => bits,
+        None => &GLYPHS[usize::from(b'?' - FIRST)],
+    }
 }
 
 /// Draw `text` with its top-left corner at (`x`, `y`) in `color`; the
 /// background is left as it is. Returns the x coordinate after the text.
 pub fn draw_text(canvas: &mut Canvas, x: usize, y: usize, text: &str, color: u32) -> usize {
+    text_scaled(canvas, x as i32, y as i32, text, color, 1) as usize
+}
+
+/// Draw `text` with every font pixel enlarged to a `scale` × `scale` block
+/// (titles use 2 or 3). Returns the x coordinate after the text.
+pub fn text_scaled(canvas: &mut Canvas, x: i32, y: i32, text: &str, color: u32, scale: i32) -> i32 {
+    let size = GLYPH_SIZE as i32 * scale;
     let mut cx = x;
     for c in text.chars() {
-        for (row, bits) in glyph(c).iter().enumerate() {
-            for col in 0..GLYPH_SIZE {
-                if bits >> col & 1 != 0 {
-                    canvas.set(cx + col, y + row, color);
+        // Skip glyphs that are entirely clipped: long lists draw a lot of
+        // text that is scrolled out of view.
+        let cell = crate::Rect::new(cx, y, size, size);
+        if !cell.intersect(canvas.clip()).is_empty() {
+            for (row, bits) in glyph(c).iter().enumerate() {
+                for col in 0..GLYPH_SIZE {
+                    if bits >> col & 1 != 0 {
+                        let (px, py) = (cx + col as i32 * scale, y + row as i32 * scale);
+                        if scale == 1 {
+                            canvas.put(px, py, color);
+                        } else {
+                            canvas.fill(crate::Rect::new(px, py, scale, scale), color);
+                        }
+                    }
                 }
             }
         }
-        cx += GLYPH_SIZE;
+        cx += size;
     }
     cx
+}
+
+/// Width in pixels of `text` drawn at `scale`.
+#[must_use]
+pub fn text_width(text: &str, scale: i32) -> i32 {
+    text.chars().count() as i32 * GLYPH_SIZE as i32 * scale
+}
+
+/// `text` shortened to at most `max` characters, with `…` replacing the
+/// end (or, with `keep_end`, the start: useful for paths).
+#[must_use]
+pub fn ellipsize(text: &str, max: usize, keep_end: bool) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    if keep_end {
+        let tail: String = text.chars().skip(count - (max - 1)).collect();
+        format!("…{tail}")
+    } else {
+        let head: String = text.chars().take(max - 1).collect();
+        format!("{head}…")
+    }
 }
 
 #[cfg(test)]
@@ -166,6 +235,7 @@ mod tests {
         );
         assert_eq!(glyph(' '), &[0; 8]);
         assert_eq!(glyph('é'), glyph('?'));
+        assert_eq!(glyph('▶')[3], 0x3C);
         assert_eq!(glyph('\n'), glyph('?'));
     }
 
@@ -187,6 +257,21 @@ mod tests {
         let lit = canvas.pixels.iter().filter(|&&p| p != 0).count();
         let expected: u32 = glyph('1').iter().map(|b| b.count_ones()).sum();
         assert_eq!(lit, expected as usize);
+    }
+
+    #[test]
+    fn scaled_text_and_widths() {
+        let mut canvas = Canvas::new(32, 16, 0);
+        let end = text_scaled(&mut canvas, 0, 0, "1", 1, 2);
+        assert_eq!(end, 16);
+        assert_eq!(text_width("abc", 2), 48);
+        // Twice as many lit pixels in each direction.
+        let lit = canvas.pixels.iter().filter(|&&p| p != 0).count();
+        let expected: u32 = glyph('1').iter().map(|b| b.count_ones()).sum();
+        assert_eq!(lit, 4 * expected as usize);
+        assert_eq!(ellipsize("hello world", 6, false), "hello…");
+        assert_eq!(ellipsize("/home/me/roms", 6, true), "…/roms");
+        assert_eq!(ellipsize("short", 6, true), "short");
     }
 
     #[test]
