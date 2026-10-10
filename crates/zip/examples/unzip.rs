@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use gase_zip::crc32::crc32;
-use gase_zip::{Archive, find_rom, inflate, inflate_reference};
+use gase_zip::{Archive, Method, find_rom, inflate, inflate_reference};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,6 +47,9 @@ fn run(args: &[String]) -> Result<(), String> {
             let rounds: u32 = args.get(2).and_then(|n| n.parse().ok()).unwrap_or(10);
             let fast = time(rounds, || archive.read(rom).map(|d| d.len()));
             println!("Archive::read      {}", report(fast?, rom.size()));
+            if rom.method() != Method::Deflated {
+                return Ok(());
+            }
             // Where the time goes: decompression and checksum alone, and
             // the bit-at-a-time reference decoder for comparison.
             let packed = archive.compressed_data(rom).map_err(|e| e.to_string())?;
