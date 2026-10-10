@@ -43,8 +43,37 @@ Tab (hold)    Fast forward     Backspace     Rewind (hold)
 F5 / F8       Save / load state               F6 / F7    Previous / next slot
 F9            Reset            F11           Fullscreen
 F12           Screenshot       M             Mute
-Esc           Quit
+F1 or `       Debugger         Esc           Quit
 ```
+
+### The debugger
+
+F1 opens a second window showing the 68000 and Z80 registers and
+disassembly, the VDP registers (decoded), the palettes, every tile in VRAM
+(or plane A/B/window) and the sprite list. While it has the focus, its keys
+are:
+
+```text
+Space / P     Pause / continue          S             Step one 68000 instruction
+F / N         Run to the end of frame   V             Run to the next VBlank
+Up / Down     Move the cursor           PgDn / Home   Next page / back to PC
+B             Toggle breakpoint at cursor               C   Clear breakpoints
+G             Go to an address (type hex, Enter)
+T             Tiles / plane A / plane B / window        [ ]   Tile palette
+, .           Scroll the sprite list
+1-6           Mute FM channel 1-6       7 8 9 0       Mute PSG tone 1-3 / noise
+Esc / F1      Close the debugger
+```
+
+The same tools work without a window, which is handy for scripts and CI:
+
+```sh
+# Stop at $000200, print registers and disassembly, save the tiles and palettes
+gase --headless --break 200 --dump-vram vram.png --dump-cram cram.png game.bin
+gase --headless --frames 120 --dump-debugger debugger.png game.bin
+```
+
+`gase --debug game.bin` starts paused with the debugger open.
 
 Game controllers are detected automatically (first controller = player 1).
 

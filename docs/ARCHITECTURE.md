@@ -150,6 +150,39 @@ Frontends do not care which kind it is: `Cartridge::save_data()` and
 * CI runs formatting, clippy, all tests and a dependency-free build on every
   pull request, and the big vector suites weekly.
 
+## 8. Using the debugger to learn
+
+The debugger (F1 in the window, see the README for its keys) shows the
+console's state as the chips see it. A few experiments that make the
+sections above concrete:
+
+* **Follow the boot.** Start with `gase --debug game.bin` and press `S`
+  repeatedly: the first instructions of most games read the console's
+  version register (`A10001`), set up the VDP registers (watch the decoded
+  register list change) and clear RAM.
+* **Find the VBlank handler.** Press `V` to run until the VDP raises the
+  vertical interrupt, then `S`: the 68000 takes the level-6 interrupt and
+  the listing jumps to the handler whose address is stored at `$000078`.
+  Most games do all their VRAM updates (DMA from RAM) here.
+* **See DMA at work.** Set a breakpoint (`B`) on an instruction that writes
+  the VDP control port, step over it and watch tiles appear in the VRAM view.
+* **Read a frame apart.** Switch the picture view (`T`) between the tiles,
+  plane A, plane B and the window; compare with the sprite list to see how
+  the final picture is composited (section 4). Changing the tile palette
+  (`[` `]`) shows which palette a group of tiles was drawn for.
+* **Hear the channels.** Mute FM channels (`1`-`6`) and the PSG (`7`-`0`)
+  one by one to hear how the music is arranged across the chips.
+
+How it works: `gase_core::debug::Debugger` runs the console with a resumable
+copy of the frame loop of section 3, so it can stop after any instruction
+and continue later, while `Genesis::run_frame` itself never looks at
+breakpoints. Memory is inspected with `Genesis::peek_*`, which never touch
+I/O registers (reading those has side effects). The windows are drawn into
+plain pixel buffers with a public-domain 8×8 font
+(`crates/gase/src/debugger/`), so the same views can be saved as PNG from
+the headless runner (`--dump-vram`, `--dump-cram`, `--dump-debugger`,
+`--break`).
+
 ## Where to start reading
 
 1. `crates/core/src/system.rs` — the main loop.

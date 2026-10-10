@@ -82,6 +82,9 @@ pub struct Psg {
     /// Output flip-flops: three tones and the noise clock.
     flip_flops: [bool; 4],
     lfsr: u16,
+    /// Channels silenced by the host (bit 0 = tone 1 ... bit 3 = noise); not
+    /// part of the chip or the save state.
+    muted: u8,
 }
 
 gase_savestate::impl_state!(Psg {
@@ -112,12 +115,28 @@ impl Psg {
             counters: [0; 4],
             flip_flops: [false; 4],
             lfsr: LFSR_RESET,
+            muted: 0,
         }
     }
 
-    /// Reset to the power-on state.
+    /// Reset to the power-on state (the mute setting is kept).
     pub fn reset(&mut self) {
+        let muted = self.muted;
         *self = Self::new();
+        self.muted = muted;
+    }
+
+    /// Silence channels in [`Psg::output`]: bit 0 = tone 1, bit 1 = tone 2,
+    /// bit 2 = tone 3, bit 3 = noise. A host setting for learning and
+    /// debugging; the channels keep running.
+    pub fn set_muted_channels(&mut self, mask: u8) {
+        self.muted = mask & 0x0F;
+    }
+
+    /// The mask set with [`Psg::set_muted_channels`].
+    #[must_use]
+    pub fn muted_channels(&self) -> u8 {
+        self.muted
     }
 
     /// Write a byte to the PSG port.
@@ -184,6 +203,9 @@ impl Psg {
     /// one YM2612 channel: ±2048 per channel at full volume.
     #[must_use]
     pub fn output(&self) -> i32 {
+        if self.muted != 0 {
+            return self.output_muted();
+        }
         let mut sum = 0;
         for i in 0..3 {
             let volume = VOLUME[usize::from(self.attenuation[i])];
@@ -193,6 +215,27 @@ impl Psg {
         }
         let volume = VOLUME[usize::from(self.attenuation[3])];
         sum + if self.lfsr & 1 != 0 { volume } else { -volume }
+    }
+
+    /// [`Psg::output`] with some channels muted, kept out of line so the
+    /// normal path stays as fast as before.
+    #[cold]
+    #[inline(never)]
+    fn output_muted(&self) -> i32 {
+        let mut sum = 0;
+        for i in 0..4 {
+            if self.muted & (1 << i) != 0 {
+                continue;
+            }
+            let volume = VOLUME[usize::from(self.attenuation[i])];
+            let high = if i == 3 {
+                self.lfsr & 1 != 0
+            } else {
+                self.tone[i] <= 1 || self.flip_flops[i]
+            };
+            sum += if high { volume } else { -volume };
+        }
+        sum
     }
 }
 
@@ -339,5 +382,19 @@ mod tests {
             copy.tick();
             assert_eq!(psg.output(), copy.output());
         }
+    }
+
+    #[test]
+    fn muted_channels_are_silent() {
+        let mut psg = Psg::new();
+        psg.write(0x90); // tone 1 full volume
+        let loud = psg.output();
+        psg.set_muted_channels(0x01);
+        // Tone 1 no longer contributes; the other (silent) channels remain.
+        assert_eq!(psg.output(), loud - 2048);
+        psg.set_muted_channels(0x0F);
+        assert_eq!(psg.output(), 0);
+        psg.reset();
+        assert_eq!(psg.muted_channels(), 0x0F);
     }
 }

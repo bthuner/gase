@@ -25,6 +25,13 @@ OPTIONS:
     --wav <PATH>          Headless: record the audio as WAV
     --bench               Headless: report emulation speed
     --trace <N>           Print the first N 68000 instructions executed
+    --debug               Window: open the debugger at start, paused
+    --break <ADDR>        Stop at this 68000 address (hex, e.g. 200 or $200;
+                          repeatable). Headless: print the registers and
+                          disassembly, then stop running
+    --dump-vram <PATH>    Headless: save all 2048 VRAM tiles (palette 0) as PNG
+    --dump-cram <PATH>    Headless: save the four palettes (CRAM) as PNG
+    --dump-debugger <PATH> Headless: save a picture of the debugger window
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -37,6 +44,7 @@ KEYS (window mode):
     F5 / F8       Save / load state               F6 / F7    Previous / next slot
     F9            Reset            F11           Fullscreen
     F12           Screenshot       M             Mute
+    F1 or `       Debugger window (see README)
     Esc           Quit
 
 Game controllers are supported: the first one is player 1, the second player 2.
@@ -59,6 +67,11 @@ pub struct Options {
     pub wav: Option<PathBuf>,
     pub bench: bool,
     pub trace: u64,
+    pub debug: bool,
+    pub breakpoints: Vec<u32>,
+    pub dump_vram: Option<PathBuf>,
+    pub dump_cram: Option<PathBuf>,
+    pub dump_debugger: Option<PathBuf>,
 }
 
 /// What the command line asks for.
@@ -75,6 +88,21 @@ fn parse_region(value: &str) -> Result<Region, String> {
         "us" | "u" | "usa" | "americas" => Ok(Region::Americas),
         "eu" | "e" | "europe" | "pal" => Ok(Region::Europe),
         _ => Err(format!("unknown region '{value}' (expected jp, us or eu)")),
+    }
+}
+
+/// Parse a 68000 address in hex, with an optional `$` or `0x` prefix.
+fn parse_address(value: &str) -> Result<u32, String> {
+    let digits = value
+        .strip_prefix('$')
+        .or_else(|| value.strip_prefix("0x"))
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    match u32::from_str_radix(digits, 16) {
+        Ok(addr) if addr <= 0xFF_FFFF => Ok(addr),
+        _ => Err(format!(
+            "--break expects a hex address up to FFFFFF, got '{value}'"
+        )),
     }
 }
 
@@ -103,6 +131,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         wav: None,
         bench: false,
         trace: 0,
+        debug: false,
+        breakpoints: Vec::new(),
+        dump_vram: None,
+        dump_cram: None,
+        dump_debugger: None,
     };
 
     while let Some(arg) = args.next() {
@@ -123,6 +156,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--wav" => o.wav = Some(value("--wav")?.into()),
             "--bench" => o.bench = true,
             "--trace" => o.trace = parse_number("--trace", &value("--trace")?)?,
+            "--debug" => o.debug = true,
+            "--break" => o.breakpoints.push(parse_address(&value("--break")?)?),
+            "--dump-vram" => o.dump_vram = Some(value("--dump-vram")?.into()),
+            "--dump-cram" => o.dump_cram = Some(value("--dump-cram")?.into()),
+            "--dump-debugger" => o.dump_debugger = Some(value("--dump-debugger")?.into()),
             flag if flag.starts_with('-') && flag.len() > 1 => {
                 return Err(format!("unknown option '{flag}'"));
             }
@@ -181,5 +219,37 @@ mod tests {
         assert!(run(&["--wat", "a.bin"]).is_err());
         assert!(run(&["a.bin", "b.bin"]).is_err());
         assert_eq!(parse(["--help".to_string()]), Ok(Command::Help));
+    }
+
+    #[test]
+    fn debugger_options() {
+        let o = run(&[
+            "--break",
+            "$200",
+            "--break",
+            "0x1234",
+            "--break",
+            "ff00a",
+            "--dump-vram",
+            "vram.png",
+            "--dump-cram",
+            "cram.png",
+            "--debug",
+            "--dump-debugger",
+            "debugger.png",
+            "game.bin",
+        ])
+        .unwrap();
+        assert_eq!(o.breakpoints, [0x200, 0x1234, 0xF_F00A]);
+        assert_eq!(o.dump_vram, Some(PathBuf::from("vram.png")));
+        assert_eq!(o.dump_cram, Some(PathBuf::from("cram.png")));
+        assert!(o.debug);
+        assert_eq!(o.dump_debugger, Some(PathBuf::from("debugger.png")));
+        let o = run(&["game.bin"]).unwrap();
+        assert!(o.breakpoints.is_empty() && o.dump_vram.is_none() && !o.debug);
+        assert!(run(&["--break", "xyz", "a.bin"]).is_err());
+        assert!(run(&["--break", "1000000", "a.bin"]).is_err());
+        assert!(run(&["--break"]).is_err());
+        assert!(run(&["--dump-vram"]).is_err());
     }
 }

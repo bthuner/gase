@@ -373,3 +373,23 @@ fn part_two_global_registers_are_ignored() {
     reg(&mut ym, 0, 0x2B, 0x80);
     assert!(ym.dac_enabled);
 }
+
+#[test]
+fn muted_channels_leave_the_mix_but_keep_running() {
+    let mut ym = Ym2612::new();
+    ym.set_ladder_effect(false);
+    reg(&mut ym, 1, 0xB6, 0x80); // channel 6 left only
+    reg(&mut ym, 0, 0x2B, 0x80); // DAC on
+    reg(&mut ym, 0, 0x2A, 0xFF);
+    ym.set_muted_channels(1 << 5);
+    assert_eq!(ym.clock_sample(), (0, 0));
+    // Reset keeps the host setting.
+    ym.reset();
+    assert_eq!(ym.muted_channels(), 1 << 5);
+    ym.set_ladder_effect(false);
+    reg(&mut ym, 1, 0xB6, 0x80);
+    reg(&mut ym, 0, 0x2B, 0x80);
+    reg(&mut ym, 0, 0x2A, 0xFF);
+    ym.set_muted_channels(0);
+    assert_eq!(ym.clock_sample(), (127 << 6, 0));
+}
