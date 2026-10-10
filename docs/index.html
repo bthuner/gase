@@ -10,6 +10,8 @@
 <meta property="og:title" content="The making of gase">
 <meta property="og:description" content="A Mega Drive emulator in Rust, built to be read. The story of how it was made.">
 <meta property="og:image" content="assets/img/r2r-frame.png">
+<link rel="alternate" hreflang="en" href="./">
+<link rel="alternate" hreflang="fr" href="fr/">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/source-serif-4.woff2" as="font" type="font/woff2" crossorigin>
@@ -42,7 +44,9 @@
     <nav class="tools" aria-label="Site">
       <a href="#contents">Contents</a>
       <a href="play/">Play</a>
+      <a href="https://github.com/bthuner/gase/releases">Download</a>
       <a href="https://github.com/bthuner/gase">Source</a>
+      <a href="fr/" hreflang="fr" lang="fr" title="Lire en français">FR</a>
       <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">Light</button>
     </nav>
   </div>
@@ -58,7 +62,7 @@
     <h1 id="title">A Mega Drive you can read<span class="dot">.</span></h1>
     <p class="standfirst">How an emulator was built to be <em>understood</em>: one crate per chip, every CPU checked against millions of recorded test cases, and a rule that every fast path keeps the readable version beside it.</p>
     <p class="byline">gase · MIT licence · github.com/bthuner/gase</p>
-    <p class="try"><a class="play-link" href="play/">Try it in your browser</a></p>
+    <p class="try"><a class="play-link" href="play/">Try it in your browser</a> <span class="or">or</span> <a class="play-link" href="https://github.com/bthuner/gase/releases">download it</a></p>
   </div>
   <div class="grid hero-plate">
     <figure class="screen k3 reveal">
@@ -71,7 +75,7 @@
       <li>Platforms: desktop, browser, Android, iOS <b>4</b></li>
       <li>Z80 test cases passed <b>1,604,000</b></li>
       <li>68000 test cases run <b>1,310,060</b></li>
-      <li>Pull requests to get here <b>25</b></li>
+      <li>Pull requests to get here <b>33</b></li>
       <li>Speed-up from profiling <b>1.5–1.9×</b></li>
       <li><span><code>unsafe</code> blocks, all in the phone entry point</span> <b>2</b></li>
     </ul>
@@ -101,7 +105,8 @@
       <li><a href="#web"><span class="n">16</span><span class="t">Rust in a browser</span><span class="d">WebAssembly with nothing in between.</span></a></li>
       <li><a href="#phones"><span class="n">17</span><span class="t">Rust on a phone</span><span class="d">Who calls main on Android and iOS.</span></a></li>
       <li><a href="#crash"><span class="n">18</span><span class="t">A crash in someone else’s code</span><span class="d">Safe Rust, a dangling pointer, a smoke test.</span></a></li>
-      <li class="upcoming"><a href="#next"><span class="n">19</span><span class="t">What’s next</span><span class="d">Ideas worth building, and known gaps.</span></a></li>
+      <li><a href="#shipping"><span class="n">19</span><span class="t">Shipping to every platform</span><span class="d">One tag, seven files, and a ROM that does nothing.</span></a></li>
+      <li class="upcoming"><a href="#next"><span class="n">20</span><span class="t">What’s next</span><span class="d">Ideas worth building, and known gaps.</span></a></li>
     </ol>
   </div>
 </nav>
@@ -973,6 +978,10 @@ cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refre
         <li><span><code>scripts/smoke-sdl.sh</code>: the optimised program must still be running after five seconds (chapter 18)</span></li>
       </ol>
       <p>Separate workflows build the browser version and the phone apps: an Android APK, and the iOS app for device and simulator.</p>
+      <h3>One interface, then three platforms at once</h3>
+      <p>The interface and the ports were the biggest piece of work after the emulator itself, and the order mattered. The platform-free interface came first, on its own branch with the desktop shell (#22), because everything else would stand on its <code>Platform</code> contract. As soon as that contract settled, the browser version (#23) and the phone apps (#24) were built <em>in parallel</em>, each in its own working copy, on branches stacked on top of #22. They worked in different directories (<code>crates/web</code> and <code>web/</code>, <code>crates/mobile</code> and <code>mobile/</code>), so they could not step on each other’s code; where they did meet, in the README and <code>ARCHITECTURE.md</code>, the second merge produced conflicts that were resolved by hand.</p>
+      <p>Each port also fed fixes back. The crash of chapter 18 was found on the interface branch and its fix merged into the other two before they were reviewed; the landscape bug of chapter 14 was found while taking pictures for this site. Twice a follow-up commit arrived a minute after its pull request had been merged, so it went into a new, small pull request instead of being lost: working fast means checking the last word after the merge, not only before.</p>
+      <p>gase was written with an AI assistant working on its own branches and pull requests; a person reviewed and merged every one of them. Each commit says so in its last line: <i>Co-authored with AI</i>.</p>
       <p>The big suites are too large for every push (the Z80 vectors alone are about 1.3 GB), so a second workflow runs them weekly and on demand, together with the test-ROM regression: each ROM run for a fixed number of frames with scripted presses, and an FNV-1a hash of the picture compared with a value that was only recorded after looking at the frame.</p>
     </div>
     <aside class="c-side side">
@@ -1002,8 +1011,14 @@ cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refre
           <tr><td>#22</td><td>The interface, controls, and the SDL crash fix</td><td class="branch">feature/app-ui</td><td class="when r">10 Oct 14:03</td></tr>
           <tr><td>#23</td><td>The browser version, an installable PWA</td><td class="branch">feature/web</td><td class="when r">10 Oct 14:08</td></tr>
           <tr><td>#24</td><td>Android and iOS apps</td><td class="branch">feature/mobile</td><td class="when r">10 Oct 14:10</td></tr>
+          <tr><td>#25</td><td>Fix: Start and Mode off the picture in landscape</td><td class="branch">fix/touch-landscape-start-mode</td><td class="when r">10 Oct 14:46</td></tr>
+          <tr><td>#26</td><td>This site: the interface and the platforms</td><td class="branch">feature/making-of-update</td><td class="when r">10 Oct 14:47</td></tr>
+          <tr><td>#27</td><td>Release 0.2.0 to <code>main</code></td><td class="branch">release/v0.2.0</td><td class="when r">10 Oct 16:18</td></tr>
+          <tr><td>#30</td><td>A release workflow for every platform</td><td class="branch">feature/release-binaries</td><td class="when r">10 Oct 16:29</td></tr>
+          <tr><td>#31</td><td>Fix: static SDL on Windows and macOS</td><td class="branch">fix/release-cmake4</td><td class="when r">10 Oct 16:38</td></tr>
+          <tr><td>#33</td><td>Fix: release files for older versions</td><td class="branch">fix/release-older-versions</td><td class="when r">10 Oct</td></tr>
         </tbody>
-        <caption>Merged pull requests, in order. #6, #7 and #21 synchronised <code>main</code> and <code>develop</code>. #16 exists because two correct branches, merged together, broke a test that assumed CRAM writes land instantly.</caption>
+        <caption>Merged pull requests, in order. #6, #7, #21, #28, #29 and #32 synchronised <code>main</code> and <code>develop</code>. #16 exists because two correct branches, merged together, broke a test that assumed CRAM writes land instantly.</caption>
       </table>
       </div>
     </figure>
@@ -1047,6 +1062,16 @@ cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refre
       <figure>
         <div class="plate"><img src="assets/img/ui-remap.png" width="960" height="672" loading="lazy" alt="Remapping player 1’s keyboard: a dialog says ‘Press a key for B’, over the list of console buttons and their keys."></div>
         <figcaption><b>Remapping.</b> Pick a console button, then press its new key or pad button.</figcaption>
+      </figure>
+    </div>
+    <div class="c-fig figure ui-row two reveal">
+      <figure>
+        <div class="plate"><img src="assets/img/ui-save-states.png" width="960" height="672" loading="lazy" alt="The Save state screen: ten slots in a grid, the first three showing small pictures of The Spiral demo at different moments, the others marked Empty."></div>
+        <figcaption><b>Save states with pictures.</b> Each of the ten slots keeps a thumbnail of the moment it saved, here three moments of <i>The Spiral</i>. The state is the binary format of chapter 10; the picture is a small PNG beside it, written by the app’s own PNG encoder.</figcaption>
+      </figure>
+      <figure>
+        <div class="plate"><img src="assets/img/ui-video.png" width="960" height="672" loading="lazy" alt="The Video settings screen: aspect ratio set to Console 10:7, integer scaling off, fullscreen off, window size 3x, and a line explaining what integer scaling does."></div>
+        <figcaption><b>Settings that explain themselves.</b> The selected option says what it does in one line. “Console 10:7” keeps the pixels square, exactly as the console draws them (320 × 224 is 10:7); “TV 4:3” stretches the picture the way a television did.</figcaption>
       </figure>
     </div>
     <div class="c-text prose figure">
@@ -1215,11 +1240,81 @@ let ret = sys::SDL_LockTexture(self.raw, rect_raw_ptr, &amp;mut pixels, &amp;mut
   </div>
 </section>
 
-<!-- ============================================================ 19 NEXT -->
-<section class="chapter" id="next" data-title="19 What’s next" aria-labelledby="next-h">
+<!-- ============================================================ 19 SHIPPING -->
+<section class="chapter" id="shipping" data-title="19 Shipping to every platform" aria-labelledby="shipping-h">
   <header class="grid chapter-head">
-    <div class="rule label"><span>Chapter 19</span><span class="upcoming-mark">Ideas</span></div>
+    <div class="rule label"><span>Chapter 19</span><span>.github/workflows/release.yml · PR #30–#33</span></div>
     <p class="num" aria-hidden="true">19</p>
+    <h2 id="shipping-h">Shipping to every platform</h2>
+    <p class="dek">Building gase on your own machine is a lesson. Downloading it should not be one. A single workflow turns a version tag into a program for each platform.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">When a release is published on GitHub, the <code>Release</code> workflow checks out the tagged commit and builds it everywhere at once: on Linux, Windows and macOS machines for the desktop programs, a WebAssembly build for the browser, and the phone workflow of chapter 17 for Android and iOS. A last job gathers the files, adds their checksums, takes the version’s section of <code>CHANGELOG.md</code> as the release notes and attaches everything. GitHub adds the source code by itself.</p>
+      <p>The workflow can also be started by hand with a tag name, and then it creates the tag and the release too. That is how 0.2.0 and the older 0.1.0 got their files after the fact; 0.1.0 predates the browser and phone code, so the workflow looks at what the commit contains and builds only those platforms.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>7</b><span>files for each version: three desktop programs, the browser version, an Android APK, an iOS app and a list of checksums.</span></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+      <div class="table-wrap">
+      <table class="ledger">
+        <thead><tr><th scope="col">File (0.2.0)</th><th scope="col">For</th><th scope="col" class="r">Size</th></tr></thead>
+        <tbody>
+          <tr><td>linux-x86_64.tar.gz</td><td>Linux, built on Ubuntu 22.04 so that older systems can run it too</td><td class="when r">2.5 MB</td></tr>
+          <tr><td>windows-x86_64.zip</td><td>Windows 10 and 11</td><td class="when r">1.1 MB</td></tr>
+          <tr><td>macos-universal.tar.gz</td><td>Apple silicon and Intel in one program, joined with <code>lipo</code></td><td class="when r">2.3 MB</td></tr>
+          <tr><td>web.zip</td><td>The browser version, ready to serve</td><td class="when r">0.2 MB</td></tr>
+          <tr><td>android.apk</td><td>Android phones, for installing by hand</td><td class="when r">3.3 MB</td></tr>
+          <tr><td>ios-unsigned.ipa</td><td>iPhones, once signed with a developer account</td><td class="when r">0.8 MB</td></tr>
+        </tbody>
+        <caption>The files of the 0.2.0 release, compressed. The whole emulator, interface included, is smaller than most single images on a news site.</caption>
+      </table>
+      </div>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>Nothing else to install</h3>
+      <p>The desktop program needs SDL2 for its window, sound and gamepads, and asking players to install a library first would be a poor welcome. The <code>sdl2-sys</code> crate happens to ship SDL’s complete source code, and two features make it compile that source with CMake and link it into the executable: <code class="wrap">cargo build --features sdl2/bundled,sdl2/static-link</code>. The result depends on nothing but the operating system. On Linux, SDL still finds X11 or Wayland and the sound system when it starts, the way it always does, so one file runs on any desktop.</p>
+      <p>Each desktop build is then copied alone into an empty folder and started: if it still needed an SDL library, the system would refuse to run it. On Linux it must also keep its window open for five seconds.</p>
+      <h3>Three surprises, found before they mattered</h3>
+      <p>On pull requests that change it, the workflow builds every file and publishes nothing, so it was tested long before a release depended on it. Linux worked at once. Windows and macOS failed three times, each failure precise enough to fix in a few lines:</p>
+    </div>
+    <figure class="c-fig figure reveal">
+      <div class="table-wrap">
+      <table class="ledger">
+        <thead><tr><th scope="col">Where</th><th scope="col">What the build said</th><th scope="col">Why, and the fix</th></tr></thead>
+        <tbody>
+          <tr><td>Windows, macOS</td><td><code>Compatibility with CMake &lt; 3.5 has been removed</code></td><td>The machines now have CMake 4, and SDL 2’s build files still ask for CMake 3.0. Setting <code>CMAKE_POLICY_VERSION_MINIMUM=3.5</code> tells CMake that is fine.</td></tr>
+          <tr><td>Windows</td><td><code>unresolved external symbol RegOpenKeyExW</code></td><td>SDL reads the registry, which lives in <code>advapi32.lib</code>, and the crate forgets to link it when SDL is linked in. One linker argument adds it.</td></tr>
+          <tr><td>macOS</td><td><code>Undefined symbols: ___isPlatformVersionAtLeast</code></td><td>SDL’s gamepad code asks “is this macOS new enough?”, which compiles to a call into clang’s own runtime library. A C program gets that library automatically; a Rust program links without it. Naming the file fixes it.</td></tr>
+        </tbody>
+        <caption>The three failures of the first test runs, in order. None of them was in gase’s code; all of them would have stopped a real release.</caption>
+      </table>
+      </div>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>A game that does nothing, forever</h3>
+      <p>The five-second test needs something to run, and the 0.1.0 program will not even start without a game. Downloading a test ROM in every build would make releases depend on someone else’s server, so the workflow writes its own, one kilobyte long, with a single line of Python:</p>
+    </div>
+    <figure class="c-fig figure reveal">
+<pre class="code"><code>offset  bytes          meaning
+000000  00 FF FE 00    initial stack pointer: $FFFE00, in work RAM
+000004  00 00 02 00    initial program counter: start at $000200
+000100  53 45 47 41    "SEGA", where the header says it should be
+000200  60 FE          BRA.S $200: branch to this very instruction</code></pre>
+      <figcaption><span class="fig-no">FIG. 19</span>Everything else is zero. <code>60</code> is the 68000’s short branch, and <code>FE</code> is its distance: −2 bytes, counted from the end of the two-byte instruction, which lands back on the instruction itself. The console runs it forever, the window stays open, and the test passes. <code>gase --trace</code> shows it: <code>000200  bra.s $200</code>, over and over.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <p>The phone files come with a caveat that the release notes repeat. Android installs the APK after a warning, because it is signed with a development key rather than a store key. An iPhone installs nothing that has not been signed by a registered developer, so the <code>.ipa</code> is a starting point for people who have such an account, or a tool that signs with theirs.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 20 NEXT -->
+<section class="chapter" id="next" data-title="20 What’s next" aria-labelledby="next-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 20</span><span class="upcoming-mark">Ideas</span></div>
+    <p class="num" aria-hidden="true">20</p>
     <h2 id="next-h">What’s next</h2>
     <p class="dek">The core still has no idea what a window is. Everything below can be built on top of it, and each item is a lesson in its own right.</p>
   </header>

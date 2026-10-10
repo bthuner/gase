@@ -114,6 +114,15 @@ phone=(--mobile --ui-density 2)
 ui phone-home "" "${phone[@]}" --ui-size 780x1688
 ui phone-game "$game" "${phone[@]}" --ui-size 780x1688 --frames 1200 --ui-screen game
 ui phone-landscape "$game" "${phone[@]}" --ui-size 1688x780 --frames 1200 --ui-screen game
+# Save states with their pictures: three moments of The Spiral, each saved
+# by pressing F5 (F7 first moves to the next slot), then the slot screen.
+spiral="$lib/The Spiral.bin"
+ui_quiet() { GASE_CONFIG_DIR="$work/cfg" "$gase" --headless "$@" --dump-ui "$work/scratch.png" "$spiral" >/dev/null 2>&1; }
+ui_quiet --frames 300 --ui-screen game,key:F5
+ui_quiet --frames 700 --ui-screen game,key:F7,key:F5
+ui_quiet --frames 1100 --ui-screen game,key:F7,key:F7,key:F5
+ui save-states "$spiral" --frames 1100 --ui-screen pause,save
+ui video "$game" --frames 600 --ui-screen pause,settings,video
 
 echo "== the browser version (needs node and the playwright package, else skipped)"
 # web/tests/smoke.mjs drives the real page in headless Chromium and saves
