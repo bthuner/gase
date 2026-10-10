@@ -50,6 +50,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gase-mobile"
+version = "0.1.0"
+dependencies = [
+ "gase",
+ "sdl2",
+]
+
+[[package]]
 name = "gase-savestate"
 version = "0.1.0"
 

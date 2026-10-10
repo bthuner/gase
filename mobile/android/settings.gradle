@@ -1,0 +1,19 @@
+// The Android app of gase: a Gradle project in the shape of SDL2's
+// android-project template, with SDL's Java sources taken from the pinned
+// SDL release (see app/build.gradle) instead of being copied in here.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'gase'
+include ':app'

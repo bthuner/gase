@@ -52,7 +52,8 @@ pub enum Aspect {
 /// When to show the on-screen touch controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TouchMode {
-    /// When the platform says it has a touch screen.
+    /// When the platform says it has a touch screen (or one was touched),
+    /// except while a gamepad is being used.
     #[default]
     Auto,
     On,

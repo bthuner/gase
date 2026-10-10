@@ -1,0 +1,12 @@
+<!-- The gase app icon: the three bars of the project's favicon (red, gold,
+     cream) on near-black. Original artwork; drawn on Android's 108 x 108
+     adaptive-icon grid, with everything inside the 66-unit safe circle so no
+     launcher mask cuts it. Android uses the same shapes as vector drawables
+     (android/app/src/main/res/drawable*/ic_launcher*.xml); iOS a PNG made from
+     this file (ios/Resources/Assets.xcassets/AppIcon.appiconset). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="1024" height="1024">
+  <rect width="108" height="108" fill="#0d0c0b"/>
+  <rect x="30" y="30" width="48" height="9.6" fill="#f0473b"/>
+  <rect x="30" y="49.2" width="48" height="9.6" fill="#dcae45"/>
+  <rect x="30" y="68.4" width="28.8" height="9.6" fill="#ede6d9"/>
+</svg>

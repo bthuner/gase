@@ -254,6 +254,9 @@ picture, play sound, read buttons, open files, offer menus. Only the
   finger becomes a console button, how fast to run. It has no
   dependencies and no I/O, like the core.
 * A **shell** per platform does the *how*: `crates/gase/src/sdl.rs` (with
+  `desktop.rs` for files) on desktop and, the same file with `mobile.rs`
+  for files, on Android and iOS (see "Mobile shells" below); a web shell
+  (JavaScript + WASM) follows the same pattern.
   `desktop.rs` for files) on desktop; `crates/web` with the page in
   `web/` in a browser (section 11); Android/iOS shells (SDL2) can follow
   the same pattern.
@@ -311,6 +314,40 @@ Inside the app, three ideas are worth reading about in the code:
   tracked separately, so the console buttons are simply the union of what
   each one presses.
 
+### Mobile shells
+
+SDL2 runs on Android and iOS too, so the phone apps reuse the desktop's
+SDL shell instead of a framework of their own: `gase::sdl::run_sdl`
+takes `Shell::Desktop(options)` or `Shell::Mobile(hooks)`, and the few
+differences are decided in one place:
+
+| | Desktop | Phone |
+|---|---|---|
+| Files | config folder, saves next to the ROM | the app's sandbox (`SDL_GetPrefPath`), ROM copies in `roms/` |
+| Opening ROMs | built-in browser, drag and drop | the system's document picker, "Open with" |
+| Window | resizable, fullscreen on F11 | the whole screen, rotates (portrait/landscape layouts) |
+| Density | drawable ÷ window size | the same on iOS; display DPI ÷ 160 on Android |
+| Lifecycle | runs until closed | background: write saves, pause, stop drawing; foreground: resume |
+
+How it starts is the interesting part. Neither system calls `main`: on
+Android the Java VM starts SDL's `SDLActivity`, which loads `libSDL2.so`
+and `libmain.so` and calls the C function `SDL_main` on a thread of its
+own; on iOS a tiny Objective-C `main` hands control to UIKit through
+`SDL_UIKitRunApp`, which calls `SDL_main` once the app has launched. The
+`gase-mobile` crate (`crates/mobile`) exports `SDL_main` — compiled as a
+`cdylib` for Android, a `staticlib` linked into the iOS executable — and
+it is the only place in the workspace allowed to use `unsafe`, for that
+export and two calls into native code. What only Java or Objective-C can
+do (the document picker, "Open with", copying the file into the sandbox)
+is a few dozen lines of native glue that hands the copy's path back as an
+ordinary SDL drop-file event, which the shell already understood.
+`mobile/README.md` walks through the whole path, the build and the
+lifecycle.
+
+Two rules came with the touch screen: on-screen controls hide while a
+gamepad is being used (the last input wins), and `Event::Suspend` writes
+the save and settings immediately, because a phone may kill a backgrounded
+app without warning.
 ## 11. The web shell
 
 `crates/web` (gase-web) is the platform contract implemented for a
@@ -378,5 +415,7 @@ wasm-bindgen, no web-sys, no bundler.
 6. `crates/app/src/lib.rs` — the user interface, and `platform.rs` for
    how it reaches any platform.
 7. `crates/zip/src/inflate.rs` — DEFLATE, for a break from hardware.
-8. `crates/web/src/lib.rs`, then `web/gase.js` — the emulator in a web
+8. `crates/gase/src/sdl.rs` and `crates/mobile/src/lib.rs` — one shell for
+   desktops and phones, and how a Rust library becomes an app.
+9. `crates/web/src/lib.rs`, then `web/gase.js` — the emulator in a web
    page.
