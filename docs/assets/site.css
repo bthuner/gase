@@ -698,3 +698,7 @@ tbody th { font-weight: 650; }
 .mem .wire.red { stroke: var(--red); }
 .mem .arrow { fill: var(--ink-3); }
 .hero .try { margin-top: 1.2rem; font-size: 1.05rem; }
+@media (min-width: 760px) { .ui-row.two { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.hero .try .or { color: var(--ink-3); margin: 0 0.5em; font-family: var(--display); font-size: 0.9rem; }
+/* A long command in running text may break, anywhere, rather than widen the page. */
+p code.wrap { white-space: normal; overflow-wrap: anywhere; }
