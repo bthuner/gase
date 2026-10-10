@@ -254,7 +254,10 @@ versions and read profiles, and `benchmarks/results/` for measurements.
 
 [`docs/`](docs/index.html) is a static site (plain HTML, CSS and a little
 JavaScript, no build step) that GitHub Pages can serve from the `docs/`
-folder. Every picture of the emulator on it is generated, so after a change
+folder. It exists in English (`docs/index.html`) and French
+(`docs/fr/index.html`, *Les coulisses de gase*); both pages share
+`docs/assets/`, link to each other, and a change to one should be made to
+the other. Every picture of the emulator on it is generated, so after a change
 that affects them, regenerate them and check the links:
 
 ```sh
@@ -271,6 +274,22 @@ the browser version needs Node.js and the `playwright` package (found
 through `NODE_PATH`); without them that one step is skipped. The site's
 "Play" links point to `play/`, which the `Web` workflow builds at deploy
 time (`web/build.sh --out docs/play` locally).
+
+### Publishing it on GitHub Pages
+
+The `Web` workflow publishes the site, with the browser version under
+`play/`, every time something is pushed to `main`, once two settings are
+made (both need admin rights on the repository):
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. **Settings → Secrets and variables → Actions → Variables → New
+   repository variable:** name `DEPLOY_PAGES`, value `true`.
+
+Then merge something into `main`, or run **Actions → Web → Run workflow**
+on `main`. The `Publish to GitHub Pages` job prints the address:
+`https://<owner>.github.io/<repository>/` for the English page, `fr/` for
+the French one, `play/` for the emulator. To stop publishing, delete the
+variable; to take the site down, unpublish it under Settings → Pages.
 
 ## Contributing
 
