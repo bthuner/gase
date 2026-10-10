@@ -1,0 +1,305 @@
+# Builds gase for every platform and attaches the files to a GitHub release.
+#
+#   gase-<version>-linux-x86_64.tar.gz    desktop, SDL2 linked in
+#   gase-<version>-windows-x86_64.zip     desktop, SDL2 linked in
+#   gase-<version>-macos-universal.tar.gz desktop, Apple silicon + Intel
+#   gase-<version>-web.zip                the browser version: serve over HTTP
+#   gase-<version>-android.apk            debug-signed, for sideloading
+#   gase-<version>-ios-unsigned.ipa       must be signed before installing
+#   SHA256SUMS.txt
+#
+# GitHub adds the source code (zip and tar.gz) to every release by itself.
+#
+# Two ways to run it:
+# * Publish a release in the GitHub interface (Releases → Draft a new
+#   release, with a new tag such as v0.3.0): the files are built from the
+#   tagged commit and attached to it.
+# * Run it by hand (Actions → Release → Run workflow) with a tag and a
+#   commit: it builds that commit, then creates the tag and the release,
+#   with the version's section of CHANGELOG.md as its notes. This is also
+#   how to add files to an existing release; files of the same name are
+#   replaced.
+#
+# On pull requests that change it, everything is built but nothing is
+# published, so the workflow is tested before a release depends on it.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to create or update, e.g. v0.2.0
+        required: true
+      target:
+        description: Commit or branch to build (when the tag does not exist yet)
+        default: main
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/mobile.yml
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    name: What to build
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      name: ${{ steps.plan.outputs.name }}
+    steps:
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_TARGET: ${{ inputs.target }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$EVENT" in
+            release)
+              tag=$RELEASE_TAG; ref=$RELEASE_TAG ;;
+            workflow_dispatch)
+              tag=$INPUT_TAG
+              # An existing tag wins over the target: rebuild what it names.
+              if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+                ref=$tag
+              else
+                ref=$INPUT_TARGET
+              fi ;;
+            *)
+              tag=""; ref=$GITHUB_SHA ;;
+          esac
+          # File names carry the version: v0.2.0 -> gase-0.2.0-...
+          name="gase-${tag#v}"
+          [ -n "$tag" ] || name="gase-dev"
+          { echo "ref=$ref"; echo "tag=$tag"; echo "name=$name"; } >> "$GITHUB_OUTPUT"
+          echo "Building **$ref** as \`$name\`${tag:+ for release $tag}" >> "$GITHUB_STEP_SUMMARY"
+
+  desktop:
+    name: Desktop (${{ matrix.os }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu runner: binaries built against an
+          # older glibc also run on newer systems, not the other way round.
+          - os: linux
+            runner: ubuntu-22.04
+          - os: windows
+            runner: windows-latest
+            # SDL reads the registry (advapi32.lib), which sdl2-sys 0.37
+            # forgets to link when SDL is linked statically.
+            rustflags: -C link-arg=advapi32.lib
+          - os: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      # Link SDL2 into the executable: sdl2-sys compiles the SDL source it
+      # ships with CMake. Players then need nothing but the download.
+      FEATURES: sdl2/bundled,sdl2/static-link
+      # SDL 2's CMakeLists.txt asks for CMake 3.0; CMake 4 (on the Windows
+      # and macOS runners) refuses anything older than 3.5 unless told that
+      # the newer policies are fine, which they are for SDL.
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - name: SDL's build dependencies (Linux)
+        if: matrix.os == 'linux'
+        # Headers only: SDL loads X11, Wayland, ALSA and PulseAudio at run
+        # time, so the binary works whichever of them a system has.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libasound2-dev libpulse-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libudev-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.os }}
+      - name: Build (Linux, Windows)
+        if: matrix.os != 'macos'
+        shell: bash
+        run: cargo build --release -p gase --features "$FEATURES"
+      - name: Build (macOS, both processors, joined into one universal binary)
+        if: matrix.os == 'macos'
+        run: |
+          # SDL's game-controller code uses Objective-C @available checks,
+          # which call ___isPlatformVersionAtLeast from clang's own runtime
+          # library. clang links that library by itself, but Rust links
+          # with -nodefaultlibs, so name it explicitly (it is a universal
+          # archive: one path serves both processors).
+          rt="$(clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a"
+          test -f "$rt" || { echo "clang runtime not found at $rt"; exit 1; }
+          export RUSTFLAGS="-C link-arg=$rt"
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release -p gase --features "$FEATURES" --target "$t"
+          done
+          mkdir -p target/release
+          lipo -create -output target/release/gase \
+            target/aarch64-apple-darwin/release/gase target/x86_64-apple-darwin/release/gase
+          # lipo keeps each half's signature; re-sign the whole ad hoc so
+          # Apple silicon accepts it.
+          codesign --force --sign - target/release/gase
+          lipo -info target/release/gase
+      - name: Check that SDL2 is linked in
+        # Run the program alone in an empty folder: if it still needed
+        # SDL2.dll or libSDL2, the system's loader would refuse to start it.
+        shell: bash
+        run: |
+          mkdir alone
+          cp target/release/gase* alone/ 2>/dev/null || true
+          rm -f alone/*.d alone/*.pdb
+          ls alone
+          ./alone/gase --version
+          case "${{ matrix.os }}" in
+            linux) ! ldd alone/gase | grep -i sdl ;;
+            macos) ! otool -L alone/gase | grep -i sdl ;;
+          esac
+      - name: Smoke-run the window (Linux, dummy drivers)
+        if: matrix.os == 'linux'
+        run: scripts/smoke-sdl.sh target/release/gase
+      - name: Package
+        shell: bash
+        env:
+          NAME: ${{ needs.plan.outputs.name }}
+        run: |
+          dir="$NAME-${{ matrix.os }}"
+          mkdir -p dist "$dir"
+          cp README.md LICENSE CHANGELOG.md "$dir/"
+          case "${{ matrix.os }}" in
+            linux)
+              cp target/release/gase "$dir/"
+              tar -czf "dist/$NAME-linux-x86_64.tar.gz" "$dir" ;;
+            macos)
+              cp target/release/gase "$dir/"
+              tar -czf "dist/$NAME-macos-universal.tar.gz" "$dir" ;;
+            windows)
+              cp target/release/gase.exe "$dir/"
+              7z a -tzip "dist/$NAME-windows-x86_64.zip" "$dir" > /dev/null ;;
+          esac
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-${{ matrix.os }}
+          path: dist/*
+
+  web:
+    name: Web
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-web
+      - name: Build and package the player
+        env:
+          NAME: ${{ needs.plan.outputs.name }}
+        run: |
+          web/build.sh --out "build/$NAME-web"
+          mkdir -p dist
+          (cd build && zip -qr "../dist/$NAME-web.zip" "$NAME-web")
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-web
+          path: dist/*
+
+  mobile:
+    name: Phones
+    needs: plan
+    uses: ./.github/workflows/mobile.yml
+    with:
+      ref: ${{ needs.plan.outputs.ref }}
+
+  publish:
+    name: Attach to the release
+    needs: [plan, desktop, web, mobile]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      REF: ${{ needs.plan.outputs.ref }}
+      NAME: ${{ needs.plan.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect and rename the files
+        run: |
+          mkdir dist
+          mv artifacts/release-desktop-*/* artifacts/release-web/* dist/
+          cp artifacts/gase-android-debug-apk/app-debug.apk "dist/$NAME-android.apk"
+          # An .ipa is a zip with the app under Payload/. Unsigned: it must
+          # be signed (Xcode, AltStore, Sideloadly...) before an iPhone
+          # accepts it.
+          mkdir -p ipa/Payload
+          unzip -q artifacts/gase-ios-apps/gase-ios-device-unsigned.zip -d ipa/Payload
+          (cd ipa && zip -qry "../dist/$NAME-ios-unsigned.ipa" Payload)
+          (cd dist && sha256sum -- * > SHA256SUMS.txt)
+          ls -l dist
+          cat dist/SHA256SUMS.txt
+      - name: Release notes from CHANGELOG.md
+        run: |
+          # The lines between "## [x.y.z]" and the next "## [" heading (or
+          # the link definitions "[x.y.z]: https://..." that end the file).
+          awk -v v="${TAG#v}" '
+            /^## \[/ { if (on) exit; on = index($0, "## [" v "]") == 1; next }
+            /^\[[^]]*\]: / { if (on) exit }
+            on' CHANGELOG.md > notes.md
+          cat >> notes.md <<'EOF'
+
+          ### Downloads
+          | File | For |
+          |---|---|
+          | `*-linux-x86_64.tar.gz` | Linux (x86-64, glibc 2.35+). Run `./gase`; SDL2 is built in. |
+          | `*-windows-x86_64.zip` | Windows 10/11 (x86-64). Run `gase.exe`. |
+          | `*-macos-universal.tar.gz` | macOS 11+ on Apple silicon and Intel. Not notarised: run `xattr -d com.apple.quarantine gase` once. |
+          | `*-web.zip` | The browser version: serve the folder over HTTP (`python3 -m http.server`). |
+          | `*-android.apk` | Android 5+, signed with a debug key: allow installs from this source. |
+          | `*-ios-unsigned.ipa` | iOS: sign it first (e.g. AltStore, Sideloadly, or Xcode). |
+          | `SHA256SUMS.txt` | Checksums of the files above. |
+
+          The source code is attached by GitHub below. Desktop builds include SDL2 (zlib licence).
+          EOF
+          cat notes.md
+      - name: Dry run (pull request)
+        if: env.TAG == ''
+        run: echo "Pull request, so built everything and published nothing." >> "$GITHUB_STEP_SUMMARY"
+      - name: Create the release if needed, then attach the files
+        if: env.TAG != ''
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # Creates the tag on REF too. (Events caused by this workflow's
+            # token start no workflows, so this does not run itself again.)
+            gh release create "$TAG" --target "$(git rev-parse HEAD)" \
+              --title "gase ${TAG#v}" --notes-file notes.md
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          files=(dist/*)
+          echo "Attached ${#files[@]} files to $TAG" >> "$GITHUB_STEP_SUMMARY"

@@ -4,6 +4,15 @@ All notable changes to gase are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Release files for every platform: a `Release` workflow builds Linux,
+  Windows and macOS (universal) programs with SDL2 linked in, the browser
+  version, the Android APK and an unsigned iOS `.ipa`, and attaches them
+  with checksums to a GitHub release. It runs when a release is published,
+  or by hand to create a release (tag included) or refill an existing one.
+
 ## [0.2.0] - 2026-10-10
 
 Quality of life: menus and settings, every platform, ZIP files. Save
