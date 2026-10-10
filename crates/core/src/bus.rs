@@ -4,7 +4,7 @@
 //!
 //! | range | contents |
 //! |-------|----------|
-//! | `000000-3FFFFF` | cartridge ROM (and SRAM) |
+//! | `000000-3FFFFF` | cartridge ROM (and SRAM, or EEPROM latches) |
 //! | `A00000-A0FFFF` | Z80 address space (RAM, YM2612), when the Z80 bus is requested |
 //! | `A10000-A1001F` | I/O: version register, controller ports |
 //! | `A11100`        | Z80 bus request |
@@ -313,6 +313,8 @@ impl Hardware {
     pub(crate) fn write_word_68k(&mut self, addr: u32, value: u16) {
         let addr = addr & 0xFF_FFFE;
         match addr {
+            // Cartridge: a word write may change two EEPROM lines at once.
+            0x00_0000..=0x3F_FFFF => self.cart.write_word(addr, value),
             0xC0_0000..=0xDF_FFFF => self.vdp_write_word(addr, value),
             0xE0_0000..=0xFF_FFFF => {
                 let i = (addr & 0xFFFF) as usize;
