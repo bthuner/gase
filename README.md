@@ -7,6 +7,10 @@ own small crate with documentation that explains how the hardware works, and
 the whole emulator core has **no external dependencies**. It is also meant
 to be fast, compatible and pleasant to use.
 
+**[The making of gase](https://bthuner.github.io/gase/)** tells how it was
+built, chip by chip, with pictures made by the emulator itself (the site's
+source is [`docs/index.html`](docs/index.html)).
+
 | Goal | How |
 |---|---|
 | Pedagogy | One crate per chip, module docs that teach the hardware, comments that explain *why* |
@@ -104,6 +108,7 @@ crates/
 docs/
   VIABILITY.md     why Rust, effort and risk analysis
   ARCHITECTURE.md  how the pieces fit together — start here to learn
+  index.html       the project site: the making of gase
 ```
 
 ## Testing
@@ -127,6 +132,24 @@ benchmarks/callgrind.sh      # instruction counts, for profiling
 
 See [`benchmarks/README.md`](benchmarks/README.md) for how to compare
 versions and read profiles, and `benchmarks/results/` for measurements.
+
+## The project site
+
+[`docs/`](docs/index.html) is a static site (plain HTML, CSS and a little
+JavaScript, no build step) that GitHub Pages can serve from the `docs/`
+folder. Every picture of the emulator on it is generated, so after a change
+that affects them, regenerate them and check the links:
+
+```sh
+scripts/fetch-test-roms.sh            # once
+scripts/docs-screenshots.sh           # all pictures -> docs/assets/img/
+scripts/check-docs-links.py           # no broken relative links
+```
+
+`scripts/docs-screenshots.sh` uses the headless release build
+(`--screenshot`, `--dump-debugger`, `--trace`, `--wav`) and a small helper
+outside the workspace, `scripts/docs-shots`, for scripted button presses
+and pictures of the VDP's individual layers.
 
 ## Contributing
 
