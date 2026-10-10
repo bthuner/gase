@@ -325,6 +325,51 @@ impl Vdp {
         }
     }
 
+    /// The reference for [`Vdp::render_plane`]: pixel `x` of a plane,
+    /// computed from scratch by the textbook formula. `render_plane` must
+    /// produce exactly these pixels; a unit test checks it on random VRAM
+    /// and scroll settings.
+    #[cfg(test)]
+    fn plane_pixel_reference(&self, plane: Plane, info: LineInfo, x: usize) -> u8 {
+        let (name_table, scroll_index) = match plane {
+            Plane::A => (u32::from(self.regs[2] & 0x38) << 10, 0),
+            Plane::B => (u32::from(self.regs[4] & 0x07) << 13, 1),
+        };
+        let (width_cells, height_cells) = self.plane_size();
+        let line = u32::from(self.line);
+        let hscroll_offset = match self.regs[11] & 3 {
+            0 => 0,
+            1 => (line & 7) * 4,
+            2 => (line & !7) * 4,
+            _ => line * 4,
+        };
+        let hscroll_addr = (u32::from(self.regs[13] & 0x3F) << 10) + hscroll_offset;
+        let hscroll = u32::from(self.vram_word((hscroll_addr + scroll_index * 2) as u16) & 0x3FF);
+        let vsram_index = if self.regs[11] & 0x04 != 0 {
+            (x / 16 * 2 + scroll_index as usize).min(39)
+        } else {
+            scroll_index as usize
+        };
+        let vscroll_mask = if info.tile_height == 16 { 0x7FF } else { 0x3FF };
+        let vscroll = u32::from(self.vsram[vsram_index]) & vscroll_mask;
+
+        let px = (x as u32).wrapping_sub(hscroll) % (width_cells * 8);
+        let py = (info.y + vscroll) % (height_cells * info.tile_height);
+        let (cell_x, cell_y) = (px / 8, py / info.tile_height);
+        let entry_addr = name_table + (cell_y * width_cells + cell_x) * 2;
+        let attributes = self.vram_word((entry_addr & 0xFFFF) as u16);
+        let pattern = self.tile_row(attributes, py % info.tile_height, info);
+        let column = if attributes & 0x0800 != 0 {
+            7 - px % 8
+        } else {
+            px % 8
+        };
+        let colour = ((pattern >> (28 - column * 4)) & 0xF) as u8;
+        let priority = ((attributes >> 8) & 0x80) as u8;
+        let palette = ((attributes >> 9) & 0x30) as u8;
+        priority | palette | colour
+    }
+
     /// Fetch one row of a tile as 8 packed 4-bit pixels (leftmost in the top
     /// nibble), honouring vertical flip.
     #[inline]
@@ -523,6 +568,7 @@ impl Vdp {
 
 #[cfg(test)]
 mod tests {
+    use super::{LineInfo, Plane};
     use crate::{MAX_WIDTH, Vdp, VideoStandard};
 
     /// A VDP in H40 with display on, plane A at 0xC000, plane B at 0xE000,
@@ -556,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn pick_table_matches_pick() {
+    fn pick_fast_matches_pick() {
         // Every class (transparent/opaque x low/high) with several palettes
         // and colours, against every possible plane B pixel.
         let samples = [0x00, 0x80, 0x30, 0xB0, 0x05, 0x85, 0x3F, 0xBF, 0x1E, 0x9E];
@@ -567,6 +613,49 @@ mod tests {
                         let fast = Vdp::pick_fast(a, b, s, backdrop);
                         assert_eq!(fast, Vdp::pick(a, b, s, backdrop));
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn render_plane_matches_reference() {
+        let mut seed: u32 = 0x8BAD_F00D;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut vdp = Vdp::new(VideoStandard::Ntsc);
+        for byte in vdp.vram.iter_mut() {
+            *byte = random() as u8;
+        }
+        for _ in 0..300 {
+            for word in vdp.vsram.iter_mut() {
+                *word = random() as u16 & 0x7FF;
+            }
+            vdp.regs[2] = random() as u8;
+            vdp.regs[4] = random() as u8;
+            vdp.regs[11] = random() as u8 & 0x07; // scroll modes
+            vdp.regs[12] = random() as u8 & 0x07; // H40, interlace
+            vdp.regs[13] = random() as u8;
+            vdp.regs[16] = random() as u8 & 0x33; // plane size
+            vdp.line = (random() % 240) as u16;
+            vdp.odd_frame = random() & 1 != 0;
+            let double = vdp.interlace_double();
+            let info = LineInfo {
+                y: u32::from(vdp.line) * if double { 2 } else { 1 }
+                    + u32::from(double && vdp.odd_frame),
+                width: if vdp.h40() { 320 } else { 256 },
+                tile_height: if double { 16 } else { 8 },
+                tile_shift: if double { 6 } else { 5 },
+            };
+            for plane in [Plane::A, Plane::B] {
+                let mut out = [0; MAX_WIDTH + 8];
+                vdp.render_plane(&mut out, plane, info);
+                for (x, &pixel) in out[..info.width].iter().enumerate() {
+                    assert_eq!(pixel, vdp.plane_pixel_reference(plane, info, x), "x = {x}");
                 }
             }
         }
