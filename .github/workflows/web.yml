@@ -1,0 +1,61 @@
+name: Web
+
+# Builds the WebAssembly module and the page around it (web/), and uploads
+# the ready-to-serve site as an artifact. The .wasm is never committed.
+#
+# Publishing to GitHub Pages is opt-in, because Pages is configured in the
+# repository's settings: set Settings → Pages → Source to "GitHub
+# Actions", then create a repository variable DEPLOY_PAGES = true
+# (Settings → Secrets and variables → Actions → Variables). Pushes to main
+# then publish docs/ (the project site) with the player under play/.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    paths: ["web/**", "crates/**", "Cargo.*", ".github/workflows/web.yml"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: Build the web version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the module and assemble the site (docs/ + docs/play/)
+        run: |
+          web/build.sh --out docs/play
+          echo "### gase_web.wasm: $(wc -c < web/gase_web.wasm) bytes ($(gzip -9 -c web/gase_web.wasm | wc -c) gzipped)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          # The playable site alone: unzip and serve it over HTTP.
+          name: gase-web
+          path: docs/play
+      - name: Upload the site for Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_PAGES == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    name: Publish to GitHub Pages (opt-in)
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_PAGES == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

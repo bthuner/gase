@@ -26,6 +26,11 @@ OPTIONS (these override the settings for this run):
     --no-address-errors   Ignore odd-address word accesses like lenient emulators
                           (for buggy homebrew; real hardware would crash)
     --touch               Show the on-screen touch controls
+    --mobile              Run the phone app's shell in a window, as on Android
+                          and iOS: touch first, files in the app's data folder
+                          (~/.local/share/gase on Linux), no debugger; the
+                          window is --ui-size big (e.g. --ui-size 540x1170);
+                          with --dump-ui: the phone's menus
 
 HEADLESS (no window: tests, CI, benchmarks, recordings):
     --headless            Run without a window
@@ -40,7 +45,7 @@ HEADLESS (no window: tests, CI, benchmarks, recordings):
                           emulation, controls, remap, remap-waiting, browser,
                           or key:<NAME> to press a key first (e.g. key:F5)
                           (default: pause with a ROM, home without)
-    --ui-size <WxH>       Window size for --dump-ui (default: 960x672)
+    --ui-size <WxH>       Window size for --dump-ui and --mobile (default: 960x672)
     --ui-density <F>      Pixels per point for --dump-ui (default: 1; phones 2-3)
 
 DEBUGGING:
@@ -76,6 +81,24 @@ GAMEPADS (any controller SDL knows; first = player 1, second = player 2):
     Guide, or Back+Start Menu       LT / RT (hold)               Rewind / fast forward
 ";
 
+/// Command-line options override the settings for this run.
+pub fn apply_overrides(app: &mut gase_app::App, options: &Options) {
+    let s = app.settings_mut();
+    if let Some(scale) = options.scale {
+        s.video.scale = scale;
+    }
+    s.video.fullscreen |= options.fullscreen;
+    s.video.integer_scale |= options.integer_scale;
+    s.audio.low_pass &= options.low_pass;
+    if options.region.is_some() {
+        s.emulation.region = options.region;
+    }
+    s.emulation.lenient_address_errors |= !options.address_errors;
+    if options.touch {
+        s.touch = gase_app::TouchMode::On;
+    }
+}
+
 /// Parsed command line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
@@ -103,6 +126,7 @@ pub struct Options {
     pub ui_screens: Option<String>,
     pub ui_size: (u32, u32),
     pub ui_density: f32,
+    pub mobile: bool,
 }
 
 /// What the command line asks for.
@@ -185,6 +209,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         ui_screens: None,
         ui_size: (960, 672),
         ui_density: 1.0,
+        mobile: false,
     };
 
     while let Some(arg) = args.next() {
@@ -213,6 +238,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--dump-cram" => o.dump_cram = Some(value("--dump-cram")?.into()),
             "--dump-debugger" => o.dump_debugger = Some(value("--dump-debugger")?.into()),
             "--touch" => o.touch = true,
+            "--mobile" => o.mobile = true,
             "--dump-ui" => o.dump_ui = Some(value("--dump-ui")?.into()),
             "--ui-screen" => o.ui_screens = Some(value("--ui-screen")?),
             "--ui-size" => o.ui_size = parse_size(&value("--ui-size")?)?,
@@ -331,6 +357,7 @@ mod tests {
             "--ui-density",
             "3",
             "--touch",
+            "--mobile",
             "--scale",
             "2",
         ])
@@ -340,6 +367,7 @@ mod tests {
         assert_eq!(o.ui_size, (1080, 2340));
         assert!((o.ui_density - 3.0).abs() < 1e-6);
         assert!(o.touch);
+        assert!(o.mobile);
         assert_eq!(o.scale, Some(2));
     }
 }

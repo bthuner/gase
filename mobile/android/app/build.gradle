@@ -1,0 +1,79 @@
+// How the APK is put together:
+//
+//   Java:  SDL's org.libsdl.app classes (from the pinned SDL source release,
+//          fetched by ../../fetch-sdl.sh) + our GaseActivity
+//   jniLibs (native code, per ABI):  libSDL2.so + libmain.so (the Rust code),
+//          built by ../build-native.sh before anything is packaged
+//   resources: manifest, icon, strings
+plugins {
+    id 'com.android.application'
+}
+
+def repoRoot = rootProject.projectDir.parentFile.parentFile
+def nativeOut = layout.buildDirectory.dir('gase-jni').get().asFile
+
+// The SDL source tree (downloaded and checked once; `gradle` is run again
+// for every build, so this is cheap).
+def sdlDir = providers.exec {
+    commandLine 'sh', new File(repoRoot, 'mobile/fetch-sdl.sh').path
+}.standardOutput.asText.get().trim()
+
+android {
+    namespace 'io.github.bthuner.gase'
+    compileSdk 35
+    // The NDK that builds libSDL2.so and links libmain.so. Install it with
+    // Android Studio's SDK Manager ("NDK (Side by side)") or
+    // `sdkmanager "ndk;27.2.12479018"`.
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        applicationId 'io.github.bthuner.gase'
+        minSdk 21 // Android 5.0; keep equal to `api` in build-native.sh
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += ["$sdlDir/android-project/app/src/main/java"]
+            jniLibs.srcDirs = [nativeOut]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Unsigned release builds cannot be installed; sign with the debug
+            // key so `assembleRelease` gives an installable (not publishable) APK.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        // SDL's Java code is not ours to lint.
+        abortOnError false
+    }
+}
+
+// Build the native libraries before Gradle looks for them.
+// -PgaseAbis=arm64-v8a builds only one ABI (faster while developing).
+def buildNative = tasks.register('buildNative', Exec) {
+    description = 'Builds libSDL2.so and libmain.so (Rust) for each ABI'
+    workingDir repoRoot
+    commandLine 'sh', new File(repoRoot, 'mobile/android/build-native.sh').path, nativeOut.path
+    if (project.hasProperty('gaseAbis')) {
+        environment 'ABIS', project.property('gaseAbis').toString().replace(',', ' ')
+    }
+    doFirst {
+        environment 'ANDROID_NDK_HOME', android.ndkDirectory.path
+    }
+    // Always run: Cargo and CMake know best what is up to date.
+    outputs.upToDateWhen { false }
+}
+tasks.named('preBuild') { dependsOn buildNative }

@@ -78,6 +78,54 @@ echo "== the instructions before Airstriker's address error (gase --trace)"
     | grep -m1 -B 8 "^0*${handler} " >"$out/airstriker-trace.txt" || true
 cat "$out/airstriker-trace.txt"
 
+echo "== the user interface (gase --dump-ui), desktop and phone"
+# A throwaway configuration with a few recent games (one of them zipped:
+# gase reads .zip files directly) so the screens look lived in. The games
+# folder has a fixed name because the file browser shows its path.
+lib=/tmp/gase-docs/Games
+rm -rf /tmp/gase-docs
+mkdir -p "$lib" "$work/cfg"
+trap 'rm -rf "$work" /tmp/gase-docs' EXIT
+cp "$p240" "$lib/240p Test Suite.bin"
+cp "$air" "$lib/Airstriker.md"
+cp "$roms/resistance-the-spiral/rom.bin" "$lib/The Spiral.bin"
+cp "$r2r" "$work/Right 2 Repair.bin"
+python3 -c "import sys, zipfile; z = zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED); z.write(sys.argv[2], 'Right 2 Repair.bin'); z.close()" \
+    "$lib/Right 2 Repair.zip" "$work/Right 2 Repair.bin"
+{
+    echo "browse_dir = $lib"
+    for game in "Right 2 Repair.zip" "240p Test Suite.bin" "Airstriker.md" "The Spiral.bin"; do
+        echo "recent = $lib/$game"
+    done
+} >"$work/cfg/settings.cfg"
+ui() { # name rom-or-empty [flags...]
+    local name="$1" rom="$2"
+    shift 2
+    GASE_CONFIG_DIR="$work/cfg" "$gase" --headless "$@" --dump-ui "$work/$name.png" ${rom:+"$rom"} >/dev/null 2>&1
+    png "$work/$name.png" "ui-$name.png"
+}
+game="$lib/Right 2 Repair.zip"
+ui home ""
+ui browser "" --ui-screen browser
+ui controls "$game" --frames 600 --ui-screen pause,settings,controls
+ui remap "$game" --frames 600 --ui-screen pause,settings,controls,remap-waiting
+# A phone: 390 x 844 points at two pixels per point, held both ways.
+phone=(--mobile --ui-density 2)
+ui phone-home "" "${phone[@]}" --ui-size 780x1688
+ui phone-game "$game" "${phone[@]}" --ui-size 780x1688 --frames 1200 --ui-screen game
+ui phone-landscape "$game" "${phone[@]}" --ui-size 1688x780 --frames 1200 --ui-screen game
+
+echo "== the browser version (needs node and the playwright package, else skipped)"
+# web/tests/smoke.mjs drives the real page in headless Chromium and saves
+# screenshots along the way; the home screen is the one on the site.
+if node -e "require('playwright')" >/dev/null 2>&1; then
+    "$root/web/build.sh" >/dev/null
+    node "$root/web/tests/smoke.mjs" "$r2r" "$work/web" >/dev/null
+    png "$work/web/1-home.png" web-home.png
+else
+    echo "   skipped (set NODE_PATH to a node_modules folder with playwright)"
+fi
+
 echo "== a waveform of Airstriker's title music (gase --wav)"
 "$gase" --headless --frames 700 --no-address-errors --wav "$work/air.wav" "$air" >/dev/null 2>&1
 python3 "$root/scripts/wave-svg.py" "$work/air.wav" "$out/wave-zoom.svg" 8.0 0.012

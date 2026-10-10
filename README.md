@@ -9,7 +9,9 @@ to be fast, compatible and pleasant to use.
 
 **[The making of gase](https://bthuner.github.io/gase/)** tells how it was
 built, chip by chip, with pictures made by the emulator itself (the site's
-source is [`docs/index.html`](docs/index.html)).
+source is [`docs/index.html`](docs/index.html)). Once the site is
+published, **[gase runs in your browser](https://bthuner.github.io/gase/play/)**
+too.
 
 | Goal | How |
 |---|---|
@@ -17,7 +19,7 @@ source is [`docs/index.html`](docs/index.html)).
 | Performance | Pre-decoded/static-dispatch CPU cores, scanline renderer, lazy audio catch-up |
 | Compatibility | CPU cores validated against ~2.6 million test vectors, SRAM and serial EEPROM saves, SSF2 mapper, 6-button pads, PAL/NTSC |
 | Quality of life | Menus for keyboard, gamepad, mouse and touch; save states with previews, rewind, fast-forward, remappable controls, gamepad hot-plug, dynamic audio rate control |
-| Best practices | `forbid(unsafe_code)`, clippy-clean, CI, one external dependency (SDL2, optional) |
+| Best practices | `forbid(unsafe_code)` (the web and phone entry points only *deny* it, in one documented module each), clippy-clean, CI, one external dependency (SDL2, optional) |
 
 ## Building
 
@@ -29,12 +31,46 @@ cargo build --release
 ./target/release/gase path/to/game.bin
 ```
 
+The **Android and iOS apps** run the same SDL2 shell; see
+[`mobile/README.md`](mobile/README.md) for how to build them (Android SDK +
+NDK, or a Mac with Xcode) and how a Rust program becomes a phone app.
+`gase --mobile --ui-size 540x1170` tries the phone app's shell on a desktop.
+
 Without SDL2, build the dependency-free headless runner:
 
 ```sh
 cargo build --release -p gase --no-default-features
 ./target/release/gase --headless --frames 600 --screenshot shot.png game.bin
 ```
+
+### In the browser
+
+The same emulator and menus also run in a web page, compiled to
+WebAssembly (no JavaScript framework, no npm, no wasm-bindgen):
+
+```sh
+rustup target add wasm32-unknown-unknown   # once
+web/build.sh                               # → web/gase_web.wasm (~0.5 MB, ~160 KB gzipped)
+python3 -m http.server -d web 8000         # then open http://localhost:8000/
+```
+
+Open a ROM (`.md`, `.bin`, `.gen`, `.smd` or `.zip`) with *Open ROM…* or
+drop it on the page, or try the free 240p Test Suite from the link under
+the home screen. Keyboard, gamepads (Gamepad API), mouse and multi-touch
+on-screen controls all work. Games you opened, their saves, save states
+and the settings stay in the browser's storage (IndexedDB); screenshots
+(F12) are downloaded. The page is a **progressive web app**: in Chrome
+on Android use *Install app* (or *Add to Home screen*), in Safari on iOS
+*Share → Add to Home Screen*; it then opens full-screen and works
+offline. Add `?stats` to the address for a speed meter.
+
+`web/build.sh --out docs/play` assembles the playable site under the
+project site for GitHub Pages; the `Web` workflow builds it on every push
+and can publish it (opt-in, see `.github/workflows/web.yml`). The .wasm
+is never committed. `web/tests/smoke.mjs` drives the page in a headless
+Chromium (needs the `playwright` package; not part of CI yet). How the
+shell works: [`crates/web/src/lib.rs`](crates/web/src/lib.rs) and section
+12 of [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Using it
 
@@ -149,7 +185,16 @@ crates/
   core/       the console: memory maps, cartridge, controllers, scheduler
   app/        the user interface for every platform: menus, settings, input
               mapping, touch controls, drawn in software (no dependencies)
-  gase/       the desktop binary: an SDL2 shell around app/, or headless
+  gase/       the SDL2 shell around app/ (desktop and phones, a library) and
+              the desktop binary, or headless
+  mobile/     the native entry point of the Android and iOS apps (SDL_main)
+  web/        the browser shell: app/ as a WebAssembly module (gase-web)
+mobile/
+  android/    the Android app: Gradle project, GaseActivity.java
+  ios/        the iOS app: XcodeGen project, Objective-C app delegate
+  README.md   building and installing the phone apps
+web/          the page around it: plain HTML, CSS and JavaScript modules,
+              audio worklet, service worker; build.sh builds the module
 docs/
   VIABILITY.md     why Rust, effort and risk analysis
   ARCHITECTURE.md  how the pieces fit together — start here to learn
@@ -192,9 +237,13 @@ scripts/check-docs-links.py           # no broken relative links
 ```
 
 `scripts/docs-screenshots.sh` uses the headless release build
-(`--screenshot`, `--dump-debugger`, `--trace`, `--wav`) and a small helper
-outside the workspace, `scripts/docs-shots`, for scripted button presses
-and pictures of the VDP's individual layers.
+(`--screenshot`, `--dump-debugger`, `--dump-ui`, `--trace`, `--wav`) and a
+small helper outside the workspace, `scripts/docs-shots`, for scripted
+button presses and pictures of the VDP's individual layers. The picture of
+the browser version needs Node.js and the `playwright` package (found
+through `NODE_PATH`); without them that one step is skipped. The site's
+"Play" links point to `play/`, which the `Web` workflow builds at deploy
+time (`web/build.sh --out docs/play` locally).
 
 ## Contributing
 

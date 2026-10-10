@@ -166,6 +166,9 @@ pub struct App {
     touch: TouchControls,
     /// A touch screen was used, even if the platform did not report one.
     touch_seen: bool,
+    /// The last thing used to play was a gamepad (not a finger): hide the
+    /// on-screen controls until the screen is touched again.
+    pad_playing: bool,
     pointer: UiPointer,
     navs: Vec<Nav>,
     repeat: Option<(Nav, u64)>,
@@ -214,6 +217,7 @@ impl App {
             pads: Vec::new(),
             touch: TouchControls::default(),
             touch_seen: false,
+            pad_playing: false,
             pointer: UiPointer::default(),
             navs: Vec::new(),
             repeat: None,
@@ -403,11 +407,38 @@ impl App {
         self.overlay_changed = true;
     }
 
+    /// Are the on-screen controls shown?
+    ///
+    /// With [`TouchMode::Auto`] they appear on touch screens, but step
+    /// aside while a gamepad is in use: a phone clipped to a controller
+    /// should show the whole picture, without buttons nobody presses. The
+    /// rule is "the last input wins": pressing a pad button hides them,
+    /// touching the screen brings them back, and so does unplugging the
+    /// last pad.
     fn touch_visible(&self) -> bool {
         match self.settings.touch {
             TouchMode::On => true,
             TouchMode::Off => false,
-            TouchMode::Auto => self.caps.touch_screen || self.touch_seen,
+            TouchMode::Auto => {
+                let pad_in_use = self.pad_playing && !self.pads.is_empty();
+                (self.caps.touch_screen || self.touch_seen) && !pad_in_use
+            }
+        }
+    }
+
+    /// Note whether a pad (or a finger) was used last, and lay the screen
+    /// out again if that shows or hides the on-screen controls (in portrait
+    /// the picture moves).
+    fn set_pad_playing(&mut self, on: bool) {
+        if self.pad_playing == on {
+            return;
+        }
+        let before = self.touch_visible();
+        self.pad_playing = on;
+        if self.touch_visible() != before {
+            // Fingers that were down on the controls must not stay pressed.
+            self.touch.release_all();
+            self.relayout();
         }
     }
 
@@ -470,8 +501,12 @@ impl App {
             }
             Event::PadDisconnected { pad } => {
                 if let Some(i) = self.pads.iter().position(|p| p.id == pad) {
+                    let before = self.touch_visible();
                     let p = self.pads.remove(i);
                     self.notify(format!("{} disconnected", p.name));
+                    if self.touch_visible() != before {
+                        self.relayout();
+                    }
                 }
             }
             Event::PadButton {
@@ -691,6 +726,9 @@ impl App {
         let Some(index) = self.pads.iter().position(|p| p.id == id) else {
             return;
         };
+        if pressed {
+            self.set_pad_playing(true);
+        }
         let bit = 1u32 << button as u32;
         let pad = &mut self.pads[index];
         if pressed {
@@ -772,6 +810,9 @@ impl App {
         dirs.set(Buttons::UP, y < -STICK_DEAD_ZONE);
         dirs.set(Buttons::DOWN, y > STICK_DEAD_ZONE);
         pad.stick = dirs;
+        if dirs != old && dirs != Buttons::default() {
+            self.set_pad_playing(true);
+        }
         if dirs != old && self.menu_open() {
             self.mode = InputMode::Pad;
             // In menus, the dominant direction of the stick navigates.
@@ -796,6 +837,9 @@ impl App {
     fn pointer_event(&mut self, id: u64, kind: PointerKind, phase: PointerPhase, x: i32, y: i32) {
         if kind == PointerKind::Touch {
             self.mode = InputMode::Pointer;
+            if phase == PointerPhase::Down {
+                self.set_pad_playing(false);
+            }
             if !self.touch_seen {
                 self.touch_seen = true;
                 self.relayout();

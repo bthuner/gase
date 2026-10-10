@@ -111,4 +111,36 @@
     [ratio, index, cycles].forEach(function (el) { el.addEventListener("input", draw); });
     draw();
   }
+
+  // LZ77 (chapter 15): greedy, matches of 3 to 258 bytes up to 32 KB back,
+  // like DEFLATE's; overlapping copies allowed (distance < length).
+  var lz = document.querySelector("[data-lz]");
+  if (lz) {
+    var input = lz.querySelector("input");
+    var out = lz.querySelector("[data-lz-out]");
+    var stats = lz.querySelector("[data-lz-stats]");
+    var esc = function (t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/ /g, "\u00a0"); };
+    var compress = function () {
+      var t = input.value, i = 0, html = "", lits = 0, refs = 0;
+      while (i < t.length) {
+        var best = 0, dist = 0;
+        for (var j = Math.max(0, i - 32768); j < i; j++) {
+          var n = 0;
+          while (n < 258 && i + n < t.length && t[j + n] === t[i + n]) n++;
+          if (n > best) { best = n; dist = i - j; }
+        }
+        if (best >= 3) {
+          html += '<span class="ref" title="copy ' + best + " bytes from " + dist + ' back">' + esc(t.substr(i, best)) + "<small>" + dist + "</small></span>";
+          i += best; refs++;
+        } else {
+          html += '<span class="lit">' + esc(t[i]) + "</span>";
+          i++; lits++;
+        }
+      }
+      out.innerHTML = html;
+      stats.innerHTML = "<b>" + t.length + "</b> characters became <b>" + lits + "</b> literals and <b>" + refs + "</b> back-references.";
+    };
+    input.addEventListener("input", compress);
+    compress();
+  }
 })();
