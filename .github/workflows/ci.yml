@@ -20,6 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets
@@ -32,6 +33,8 @@ jobs:
         run: |
           cargo build --release -p gase
           scripts/smoke-sdl.sh target/release/gase
+      - name: The web shell compiles for WebAssembly
+        run: cargo clippy -p gase-web --target wasm32-unknown-unknown
       - name: Headless build without SDL (zero external dependencies)
         run: cargo build -p gase --no-default-features
       - run: cargo doc --workspace --no-deps
