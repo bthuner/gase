@@ -1,14 +1,15 @@
-//! Everything both frontends share: loading the ROM, battery saves and
+//! Everything both frontends share: loading the ROM, game saves and
 //! save-state files.
 //!
-//! Files live next to the ROM: `game.srm` for battery-backed RAM,
+//! Files live next to the ROM: `game.srm` for the game's own saves
+//! (battery-backed SRAM or serial EEPROM, whichever the cartridge has),
 //! `game.state0` ... `game.state9` for save states and `game-<frame>.png`
 //! for screenshots.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gase_core::{Cartridge, Config, Genesis};
+use gase_core::{Cartridge, Config, Genesis, SaveType};
 
 use crate::cli::Options;
 use crate::media;
@@ -30,12 +31,13 @@ impl Session {
             region: options.region,
             sample_rate,
             low_pass: options.low_pass,
+            address_errors: options.address_errors,
         };
         let mut session = Self {
             genesis: Genesis::new(cart, &config),
             rom_path: options.rom.clone(),
         };
-        session.load_sram();
+        session.load_save();
         session.genesis.set_trace(options.trace);
         Ok(session)
     }
@@ -50,16 +52,15 @@ impl Session {
         } else {
             "mismatch"
         };
+        let save = match cart.save_type() {
+            SaveType::None => String::new(),
+            kind => format!(", {kind}"),
+        };
         format!(
-            "{title} [{serial}] region {region:?}, {kib} KiB ROM{sram}, checksum {checksum}",
+            "{title} [{serial}] region {region:?}, {kib} KiB ROM{save}, checksum {checksum}",
             serial = h.serial,
             region = self.genesis.region(),
             kib = cart.rom().len() / 1024,
-            sram = if cart.sram.is_some() {
-                ", battery save"
-            } else {
-                ""
-            },
         )
     }
 
@@ -89,7 +90,7 @@ impl Session {
         dir.join(format!("{}{suffix}", self.stem()))
     }
 
-    fn sram_path(&self) -> PathBuf {
+    fn save_path(&self) -> PathBuf {
         self.sibling(".srm")
     }
 
@@ -98,25 +99,26 @@ impl Session {
         self.sibling(&format!(".state{slot}"))
     }
 
-    fn load_sram(&mut self) {
-        let path = self.sram_path();
-        if let (Some(sram), Ok(data)) =
-            (self.genesis.cartridge_mut().sram.as_mut(), fs::read(&path))
-        {
-            let n = data.len().min(sram.data.len());
-            sram.data[..n].copy_from_slice(&data[..n]);
-            eprintln!("Loaded battery save {}", path.display());
+    fn load_save(&mut self) {
+        let path = self.save_path();
+        if let (Some(save), Ok(data)) = (
+            self.genesis.cartridge_mut().save_data_mut(),
+            fs::read(&path),
+        ) {
+            let n = data.len().min(save.len());
+            save[..n].copy_from_slice(&data[..n]);
+            eprintln!("Loaded save {}", path.display());
         }
     }
 
-    /// Write the battery save if it changed since the last call.
-    pub fn flush_sram(&mut self) {
-        if !self.genesis.cartridge_mut().take_sram_dirty() {
+    /// Write the save file (SRAM or EEPROM) if it changed since the last call.
+    pub fn flush_save(&mut self) {
+        if !self.genesis.cartridge_mut().take_save_dirty() {
             return;
         }
-        if let Some(sram) = &self.genesis.cartridge().sram {
-            let path = self.sram_path();
-            if let Err(e) = fs::write(&path, &sram.data) {
+        if let Some(save) = self.genesis.cartridge().save_data() {
+            let path = self.save_path();
+            if let Err(e) = fs::write(&path, save) {
                 eprintln!("Cannot write {}: {e}", path.display());
             }
         }
@@ -160,6 +162,6 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        self.flush_sram();
+        self.flush_save();
     }
 }

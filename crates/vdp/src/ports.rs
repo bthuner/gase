@@ -24,6 +24,9 @@
 //! | 1100    | VRAM 8-bit read (undocumented) |
 //!
 //! After each data port access the address advances by register 15.
+//! Data-port writes are not performed immediately: they go through the
+//! write FIFO and reach memory in the next free access slot (see the `fifo`
+//! and `slots` modules).
 //!
 //! # DMA
 //!
@@ -36,10 +39,12 @@
 //!   repeated through VRAM.
 //! * `11` — **VRAM copy**: copy bytes within VRAM.
 //!
-//! Registers 19-20 hold the length in words (0 means 65536) and 21-23 the
-//! source address.
+//! Registers 19-20 hold the length (0 means 65536) and 21-23 the source
+//! address. How DMA proceeds over time is described in the `dma` module.
 
 use crate::Vdp;
+use crate::dma::Dma;
+use crate::fifo::Entry;
 
 impl Vdp {
     /// Write a word to the control port (`0xC00004`).
@@ -93,10 +98,15 @@ impl Vdp {
         // Reading the status register cancels a half-written command.
         self.write_pending = false;
 
-        // The FIFO is not emulated: writes complete instantly, so it always
-        // reads as empty. The unused top bits read back whatever was on the
-        // bus; 0x3400 matches the most common value.
-        let mut status = 0x3400 | 0x0200;
+        // The unused top bits read back whatever was on the bus; 0x3400
+        // matches the most common value.
+        let mut status = 0x3400;
+        if self.fifo.is_empty() {
+            status |= 0x0200;
+        }
+        if self.fifo.is_full() {
+            status |= 0x0100;
+        }
         if self.vint_pending {
             status |= 0x80;
         }
@@ -115,7 +125,7 @@ impl Vdp {
         if Self::in_hblank(line_cycle) {
             status |= 0x04;
         }
-        if self.dma_68k_pending {
+        if self.dma_busy() {
             status |= 0x02;
         }
         if self.standard == crate::VideoStandard::Pal {
@@ -128,18 +138,46 @@ impl Vdp {
     }
 
     /// Write a word to the data port (`0xC00000`).
+    ///
+    /// The word enters the write FIFO and reaches memory in a later access
+    /// slot. If the FIFO is full the CPU stalls until a slot frees an entry;
+    /// the wait is reported by [`Vdp::take_cpu_stall`].
     pub fn write_data(&mut self, value: u16) {
         self.write_pending = false;
-        self.write_memory(value);
-        if self.dma_fill_pending {
-            self.dma_fill_pending = false;
-            self.dma_fill(value);
+        match self.engine.dma {
+            // The fill re-reads the latest data-port value for every byte.
+            Dma::FillWait | Dma::Fill => {
+                self.engine.fill_value = value;
+                return;
+            }
+            Dma::FillArmed => {
+                self.engine.dma = Dma::FillWait;
+                self.engine.fill_value = value;
+            }
+            _ => {}
         }
+        if self.fifo.is_full() {
+            self.stall_until(|vdp| !vdp.fifo.is_full());
+        }
+        let fill = self.engine.dma == Dma::FillWait;
+        self.fifo
+            .push(Entry::new(self.code, self.address, value, fill));
+        self.address = self.address.wrapping_add(self.auto_increment());
     }
 
     /// Read a word from the data port.
+    ///
+    /// A read needs the FIFO to be empty (pending writes could change the
+    /// value) and then an access slot of its own, so the CPU may stall.
     pub fn read_data(&mut self) -> u16 {
         self.write_pending = false;
+        self.stall_until(|vdp| {
+            vdp.fifo.is_empty() && !matches!(vdp.engine.dma, Dma::FillWait | Dma::Fill | Dma::Copy)
+        });
+        let start = self.engine.pos;
+        self.step_slot();
+        self.engine.cpu_stall += self.engine.pos - start;
+
         let addr = self.address;
         let value = match self.code & 0x0F {
             0x0 => self.vram_word(addr & !1),
@@ -160,10 +198,10 @@ impl Vdp {
         value
     }
 
-    /// Perform one data-port write to whatever memory the code selects.
-    fn write_memory(&mut self, value: u16) {
-        let addr = self.address;
-        match self.code & 0x0F {
+    /// Perform one write to whatever memory `code` selects. Called when a
+    /// FIFO entry reaches its access slot.
+    pub(crate) fn write_memory(&mut self, code: u8, addr: u16, value: u16) {
+        match code & 0x0F {
             0x1 => {
                 // A write to an odd address stores the bytes swapped.
                 let value = if addr & 1 != 0 {
@@ -188,7 +226,6 @@ impl Vdp {
             // Writes with a read code are ignored.
             _ => {}
         }
-        self.address = self.address.wrapping_add(self.auto_increment());
     }
 
     pub(crate) fn vram_word(&self, addr: u16) -> u16 {
@@ -197,7 +234,7 @@ impl Vdp {
     }
 
     /// Every VRAM write goes through here so the sprite cache stays coherent.
-    fn write_vram_byte(&mut self, addr: u16, value: u8) {
+    pub(crate) fn write_vram_byte(&mut self, addr: u16, value: u8) {
         self.vram[usize::from(addr)] = value;
 
         let base = self.sprite_table_base();
@@ -213,100 +250,6 @@ impl Vdp {
     pub(crate) fn sprite_table_base(&self) -> u16 {
         let mask = if self.h40() { 0x7E } else { 0x7F };
         u16::from(self.regs[5] & mask) << 9
-    }
-
-    fn dma_length(&self) -> u32 {
-        match u32::from(self.regs[19]) | u32::from(self.regs[20]) << 8 {
-            0 => 0x1_0000,
-            n => n,
-        }
-    }
-
-    fn start_dma(&mut self) {
-        match self.regs[23] >> 6 {
-            0 | 1 => self.dma_68k_pending = true,
-            2 => self.dma_fill_pending = true,
-            _ => self.dma_copy(),
-        }
-    }
-
-    /// Is a 68000-to-VDP DMA waiting to be run by the bus?
-    #[must_use]
-    pub fn dma_68k_pending(&self) -> bool {
-        self.dma_68k_pending
-    }
-
-    /// Run a pending 68000-to-VDP DMA, reading source words through `read`.
-    ///
-    /// Returns the number of 68000 cycles the CPU is frozen for. The transfer
-    /// itself happens instantly; the stall approximates how many words the
-    /// VDP can move per line (few during active display, many during blanking).
-    pub fn run_dma_68k(&mut self, mut read: impl FnMut(u32) -> u16) -> u32 {
-        if !self.dma_68k_pending {
-            return 0;
-        }
-        self.dma_68k_pending = false;
-
-        let length = self.dma_length();
-        // The source is a word address; it wraps within a 128 KiB window
-        // because the top register (23) is never incremented.
-        let mut source = u32::from(self.regs[21]) | u32::from(self.regs[22]) << 8;
-        let high = u32::from(self.regs[23] & 0x7F) << 17;
-        for _ in 0..length {
-            let word = read(high | (source << 1));
-            self.write_memory(word);
-            source = (source + 1) & 0xFFFF;
-        }
-        self.regs[21] = source as u8;
-        self.regs[22] = (source >> 8) as u8;
-        self.regs[19] = 0;
-        self.regs[20] = 0;
-
-        // Words transferred per scanline (Sega documentation): 488 68000
-        // cycles per line divided by the slot count.
-        let blanking = self.in_vblank || !self.display_enabled();
-        let words_per_line = match (self.h40(), blanking) {
-            (true, false) => 18,
-            (false, false) => 16,
-            (true, true) => 205,
-            (false, true) => 167,
-        };
-        length * 488 / words_per_line
-    }
-
-    fn dma_fill(&mut self, value: u16) {
-        let length = self.dma_length();
-        let fill_byte = (value >> 8) as u8;
-        for _ in 0..length {
-            match self.code & 0x0F {
-                // VRAM fill writes the high byte next to the current address.
-                0x1 => self.write_vram_byte(self.address ^ 1, fill_byte),
-                // CRAM and VSRAM fills write the whole word.
-                0x3 | 0x5 => {
-                    self.write_memory(value);
-                    continue;
-                }
-                _ => {}
-            }
-            self.address = self.address.wrapping_add(self.auto_increment());
-        }
-        self.regs[19] = 0;
-        self.regs[20] = 0;
-    }
-
-    fn dma_copy(&mut self) {
-        let length = self.dma_length();
-        let mut source = u16::from(self.regs[21]) | u16::from(self.regs[22]) << 8;
-        for _ in 0..length {
-            let byte = self.vram[usize::from(source)];
-            self.write_vram_byte(self.address, byte);
-            source = source.wrapping_add(1);
-            self.address = self.address.wrapping_add(self.auto_increment());
-        }
-        self.regs[21] = source as u8;
-        self.regs[22] = (source >> 8) as u8;
-        self.regs[19] = 0;
-        self.regs[20] = 0;
     }
 }
 
@@ -326,6 +269,13 @@ mod tests {
         vdp
     }
 
+    /// Let a few lines go by so queued writes and DMA complete.
+    fn settle(vdp: &mut Vdp) {
+        for line in 1..=8 {
+            vdp.begin_line(line);
+        }
+    }
+
     #[test]
     fn register_write() {
         let mut vdp = vdp();
@@ -339,6 +289,7 @@ mod tests {
         command(&mut vdp, 0x01, 0x1234);
         vdp.write_data(0xABCD);
         vdp.write_data(0x1122);
+        settle(&mut vdp);
         assert_eq!(vdp.vram_word(0x1234), 0xABCD);
         assert_eq!(vdp.vram_word(0x1236), 0x1122);
 
@@ -352,6 +303,7 @@ mod tests {
         let mut vdp = vdp();
         command(&mut vdp, 0x01, 0x0101);
         vdp.write_data(0xABCD);
+        settle(&mut vdp);
         assert_eq!(vdp.vram_word(0x0100), 0xCDAB);
     }
 
@@ -360,6 +312,7 @@ mod tests {
         let mut vdp = vdp();
         command(&mut vdp, 0x03, 0x0002);
         vdp.write_data(0xFFFF);
+        settle(&mut vdp);
         assert_eq!(vdp.cram[1], 0x0EEE);
     }
 
@@ -373,6 +326,7 @@ mod tests {
         vdp.write_control(0x9780); // fill
         command(&mut vdp, 0x21, 0x2000);
         vdp.write_data(0x5500);
+        settle(&mut vdp);
         // The initial write stores 0x55 0x00 at 0x2000 and moves to 0x2001;
         // the fill then writes 0x55 at address ^ 1: 0x2000, 0x2003, 0x2002,
         // 0x2005.
@@ -394,6 +348,7 @@ mod tests {
         vdp.write_control(0x9601);
         vdp.write_control(0x97C0); // copy
         command(&mut vdp, 0x20, 0x0200);
+        settle(&mut vdp);
         assert_eq!(&vdp.vram[0x200..0x204], &[1, 2, 3, 4]);
     }
 
@@ -409,10 +364,11 @@ mod tests {
         command(&mut vdp, 0x23, 0x0000);
         assert!(vdp.dma_68k_pending());
         let mut reads = Vec::new();
-        vdp.run_dma_68k(|addr| {
+        vdp.fetch_dma_source(|addr| {
             reads.push(addr);
             0x0E0E
         });
+        settle(&mut vdp);
         assert_eq!(reads, vec![0x100, 0x102]);
         assert_eq!(vdp.cram[0], 0x0E0E);
         assert_eq!(vdp.cram[1], 0x0E0E);
@@ -428,6 +384,7 @@ mod tests {
         vdp.write_data(0x0123);
         vdp.write_data(0x0F02);
         vdp.write_data(0xFFFF); // attribute word: not cached
+        settle(&mut vdp);
         assert_eq!(&vdp.sat_cache[4..8], &[0x01, 0x23, 0x0F, 0x02]);
         assert_eq!(vdp.sat_cache[8], 0);
     }
