@@ -12,6 +12,7 @@ gase-m68k.workspace = true
 gase-z80.workspace = true
 gase-sound.workspace = true
 gase-vdp.workspace = true
+gase-zip.workspace = true
 
 [lints]
 workspace = true

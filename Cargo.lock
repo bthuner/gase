@@ -31,6 +31,7 @@ dependencies = [
  "gase-sound",
  "gase-vdp",
  "gase-z80",
+ "gase-zip",
 ]
 
 [[package]]
