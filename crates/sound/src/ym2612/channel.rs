@@ -121,6 +121,16 @@ impl Channel {
     /// | S2 → S4             | 3                  | previous sample   |
     #[inline]
     pub fn calc(&mut self, roms: &Roms, lfo_am: u16) -> i32 {
+        if self.ops.iter().all(Operator::is_silent) {
+            // A silent channel (see `Operator::is_silent`): every operator
+            // outputs 0, so only the oscillators and the pipeline move on.
+            for op in &mut self.ops {
+                op.phase = (op.phase + op.inc) & 0xF_FFFF;
+            }
+            self.op1_out = [0, self.op1_out[0]];
+            self.s2_out = 0;
+            return 0;
+        }
         let am = lfo_am >> AM_SHIFT[usize::from(self.ams)];
         let s1_prev = i32::from(self.op1_out[0]);
         let s2_prev = i32::from(self.s2_out);

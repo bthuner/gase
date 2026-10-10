@@ -207,6 +207,18 @@ impl Operator {
         }
     }
 
+    /// Has this operator's note been released and faded out completely?
+    ///
+    /// Such an operator stays silent until the next key-on whatever happens
+    /// around it: its attenuation is the maximum, so its output is 0 for any
+    /// modulation, and envelope ticks leave it at the maximum. Unused
+    /// channels spend most of their time like this, which lets
+    /// [`Operator::eg_clock`] and `Channel::calc` skip most of their work.
+    #[inline]
+    pub fn is_silent(&self) -> bool {
+        self.eg_phase == RELEASE && self.level == MAX_ATTENUATION
+    }
+
     /// One envelope generator tick (every 3 samples).
     ///
     /// `counter` is the global 12-bit envelope counter. A rate updates the
@@ -214,6 +226,9 @@ impl Operator {
     /// and the increment is taken from an 8-step pattern selected by the next
     /// three bits.
     pub fn eg_clock(&mut self, counter: u16) {
+        if self.is_silent() {
+            return;
+        }
         if self.eg_phase == DECAY && self.level >= self.sustain_level() {
             self.eg_phase = SUSTAIN;
         }
