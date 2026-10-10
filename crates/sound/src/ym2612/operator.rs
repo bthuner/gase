@@ -210,10 +210,12 @@ impl Operator {
     /// Has this operator's note been released and faded out completely?
     ///
     /// Such an operator stays silent until the next key-on whatever happens
-    /// around it: its attenuation is the maximum, so its output is 0 for any
-    /// modulation, and envelope ticks leave it at the maximum. Unused
+    /// around it: its attenuation is the maximum (no SSG-EG inversion in
+    /// release), so its output is 0 for any modulation, and an envelope
+    /// tick can only add to a level already at the maximum. Unused
     /// channels spend most of their time like this, which lets
-    /// [`Operator::eg_clock`] and `Channel::calc` skip most of their work.
+    /// [`Operator::eg_clock`] and `Channel::calc` skip most of their work;
+    /// unit tests check the skips against the full computations.
     #[inline]
     pub fn is_silent(&self) -> bool {
         self.eg_phase == RELEASE && self.level == MAX_ATTENUATION
@@ -225,10 +227,17 @@ impl Operator {
     /// level only when the low `EG_SHIFT[rate]` bits of the counter are zero,
     /// and the increment is taken from an 8-step pattern selected by the next
     /// three bits.
+    ///
+    /// Fast path: skips silent operators (see [`Operator::is_silent`]), on
+    /// which the reference, [`Operator::eg_step`], changes nothing.
     pub fn eg_clock(&mut self, counter: u16) {
-        if self.is_silent() {
-            return;
+        if !self.is_silent() {
+            self.eg_step(counter);
         }
+    }
+
+    /// The envelope tick itself: the reference for [`Operator::eg_clock`].
+    pub(crate) fn eg_step(&mut self, counter: u16) {
         if self.eg_phase == DECAY && self.level >= self.sustain_level() {
             self.eg_phase = SUSTAIN;
         }

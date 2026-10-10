@@ -206,8 +206,12 @@ impl Psg {
     }
 
     /// Run `ticks` counter ticks and return the sum of [`Psg::output`] after
-    /// each of them: exactly `(0..ticks).map(|_| { psg.tick(); psg.output() })
-    /// .sum()`, which is what the mixer averages between two FM samples.
+    /// each of them, which is what the mixer averages between two FM
+    /// samples.
+    ///
+    /// This is a fast path. Its reference, which it must match exactly (a
+    /// unit test checks it does), is the straightforward
+    /// `(0..ticks).map(|_| { psg.tick(); psg.output() }).sum()`.
     ///
     /// Instead of decrementing every counter on every tick, each channel
     /// jumps from one reload of its counter to the next: between two
@@ -463,41 +467,53 @@ mod tests {
 
     #[test]
     fn run_matches_tick_by_tick() {
-        // Two identical chips, one ticked one step at a time, one in
-        // batches of varying sizes, through tone, noise and register
-        // changes (including the ultrasonic periods 0 and 1).
+        // `run` is a fast path; the reference is `tick()` then `output()`,
+        // tick by tick. Two identical chips, one driven each way, through
+        // random register settings: tone periods over the whole range with
+        // extra weight on the special 0 and 1, every noise mode (including
+        // "use tone 3"), all attenuations, and batches of random length so
+        // that every batch starts somewhere in the middle of a period.
+        let mut seed: u32 = 0x2545_F491;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
         let mut slow = Psg::new();
         let mut fast = Psg::new();
-        let writes: [&[u8]; 6] = [
-            &[
-                0x8E, 0x0F, 0x90, 0xA5, 0x02, 0xB3, 0xC1, 0x00, 0xD8, 0xE4, 0xF2,
-            ],
-            &[0xE7, 0xC9, 0x01],
-            &[0xA0, 0x00, 0xE1],
-            &[0x81, 0x00, 0xE6, 0xF0],
-            &[0xC0, 0x00, 0xE3, 0x9F],
-            &[0xE5],
-        ];
-        let mut batch = 1;
-        for bytes in writes {
-            for &byte in bytes {
+        for _ in 0..3000 {
+            let channel = (random() % 4) as u8;
+            let mut bytes = Vec::new();
+            match random() % 3 {
+                0 if channel < 3 => {
+                    let period = match random() % 4 {
+                        0 => random() % 2,
+                        1 => random() % 16,
+                        _ => random() % 0x400,
+                    } as u16;
+                    bytes.push(0x80 | channel << 5 | (period & 0xF) as u8);
+                    bytes.push((period >> 4) as u8 & 0x3F);
+                }
+                0 | 1 => bytes.push(0xE0 | (random() % 8) as u8),
+                _ => bytes.push(0x90 | channel << 5 | (random() % 16) as u8),
+            }
+            for byte in bytes {
                 slow.write(byte);
                 fast.write(byte);
             }
-            for _ in 0..400 {
-                batch = batch % 13 + 1;
-                let expected: i64 = (0..batch)
-                    .map(|_| {
-                        slow.tick();
-                        i64::from(slow.output())
-                    })
-                    .sum();
-                assert_eq!(fast.run(batch), expected);
-                assert_eq!(
-                    (fast.counters, fast.flip_flops, fast.lfsr),
-                    (slow.counters, slow.flip_flops, slow.lfsr)
-                );
-            }
+            let batch = random() % 40;
+            let expected: i64 = (0..batch)
+                .map(|_| {
+                    slow.tick();
+                    i64::from(slow.output())
+                })
+                .sum();
+            assert_eq!(fast.run(batch), expected);
+            assert_eq!(
+                (fast.counters, fast.flip_flops, fast.lfsr),
+                (slow.counters, slow.flip_flops, slow.lfsr)
+            );
         }
     }
 
