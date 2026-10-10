@@ -52,6 +52,12 @@ fn empty_archive() {
 fn not_a_zip() {
     assert_eq!(Archive::parse(b"").unwrap_err(), Error::NotAZip);
     assert_eq!(Archive::parse(&rom(4096)).unwrap_err(), Error::NotAZip);
+    // Starts like an archive but has no end: cut short.
+    let bytes = zip(&[File::new("a.bin", &rom(100), 0)], b"");
+    assert_eq!(
+        Archive::parse(&bytes[..120]).unwrap_err(),
+        Error::Truncated("no end of central directory")
+    );
 }
 
 #[test]

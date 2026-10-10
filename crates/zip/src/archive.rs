@@ -404,7 +404,12 @@ fn find_eocd(data: &[u8]) -> Result<usize, Error> {
             let r = Record(&data[pos..]);
             r.u32(0) == EOCD_SIGNATURE && pos + EOCD_SIZE + r.u16(20) as usize <= data.len()
         })
-        .ok_or(Error::NotAZip)
+        .ok_or(if data.starts_with(&LOCAL_SIGNATURE.to_le_bytes()) {
+            // It starts like a zip file: most likely an interrupted download.
+            Error::Truncated("no end of central directory")
+        } else {
+            Error::NotAZip
+        })
 }
 
 /// File names are UTF-8 when flag bit 11 is set, and otherwise in the
