@@ -121,18 +121,22 @@ fn write_png(path: &std::path::Path, canvas: &debugger::Canvas) -> Result<(), St
 /// size and density from a desktop.
 fn dump_ui(options: &Options, path: &Path) -> Result<(), String> {
     let mut platform = Desktop::new();
-    let caps = Capabilities {
-        sample_rate: SAMPLE_RATE,
-        touch_screen: options.touch,
-        file_browser: true,
-        drop_files: true,
-        can_quit: true,
-        fullscreen: true,
-        debugger: true,
-        ..Capabilities::default()
+    let caps = if options.mobile {
+        crate::mobile::phone_capabilities(SAMPLE_RATE)
+    } else {
+        Capabilities {
+            sample_rate: SAMPLE_RATE,
+            touch_screen: options.touch,
+            file_browser: true,
+            drop_files: true,
+            can_quit: true,
+            fullscreen: true,
+            debugger: true,
+            ..Capabilities::default()
+        }
     };
     let mut app = App::new(&mut platform, caps);
-    crate::apply_overrides(&mut app, options);
+    crate::cli::apply_overrides(&mut app, options);
     let (width, height) = options.ui_size;
     app.handle(
         &mut platform,
