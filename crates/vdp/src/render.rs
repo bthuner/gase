@@ -286,40 +286,42 @@ impl Vdp {
             u32::from(self.vsram[index]) & vscroll_mask
         };
 
-        // Walk the line in *runs*: stretches of screen pixels that come from
-        // the same row of the same tile. A run ends at the tile's right edge
-        // and, with per-column vertical scroll, at the edge of each 16-pixel
-        // column (whose vscroll may pick another row). Looking up the name
-        // table and the pattern once per run instead of once per pixel is
-        // what makes this loop cheap; the plane wraps on whole cells, so
-        // wrapping never splits a run.
+        // Walk the line column by column (16-pixel columns with per-column
+        // vertical scroll, otherwise the whole line is one column), and each
+        // column in *runs*: stretches of pixels that come from the same row
+        // of the same tile, ending at the tile's right edge or the column's.
+        // The name table row and the row within the tiles are found once
+        // per column, the name table entry and the pattern once per run,
+        // which is what makes this loop cheap. The plane wraps on whole
+        // cells, so wrapping never splits a run.
+        let row_shift = info.tile_height.trailing_zeros();
         let mut x = 0;
         while x < info.width {
             let column = x / 16;
-            let px = (x as u32).wrapping_sub(hscroll) & width_mask;
-            let py = (info.y + vscroll_for(column)) & height_mask;
-            let fine = (px & 7) as usize;
             let column_end = if per_column {
                 (column + 1) * 16
             } else {
                 info.width
             };
-            let run = (8 - fine).min(column_end.min(info.width) - x);
-
-            let cell_x = px >> 3;
-            let cell_y = py / info.tile_height;
-            let entry_addr = name_table + (cell_y * width_cells + cell_x) * 2;
-            let attributes = self.vram_word((entry_addr & 0xFFFF) as u16);
-            let pattern = self.tile_row(attributes, py % info.tile_height, info);
-            // Shift out the `fine` pixels left of the screen and store all 8
-            // bytes in one go. Past the run's end they are leftovers (zeros
-            // or pixels of a column the run stopped at), which the next run
-            // overwrites, or which land in the buffer's slack at the end of
-            // the line. A fixed-size store is much cheaper than a copy of
-            // 1 to 8 bytes.
-            let pixels = Self::decode_row(attributes, pattern) << (fine * 8);
-            out[x..x + 8].copy_from_slice(&pixels.to_be_bytes());
-            x += run;
+            let py = (info.y + vscroll_for(column)) & height_mask;
+            let name_row = name_table + (py >> row_shift) * width_cells * 2;
+            let row_in_tile = py & (info.tile_height - 1);
+            while x < column_end {
+                let px = (x as u32).wrapping_sub(hscroll) & width_mask;
+                let fine = (px & 7) as usize;
+                let entry_addr = name_row + (px >> 3) * 2;
+                let attributes = self.vram_word((entry_addr & 0xFFFF) as u16);
+                let pattern = self.tile_row(attributes, row_in_tile, info);
+                // Shift out the `fine` pixels left of the screen and store
+                // all 8 bytes in one go. Past the run's end they are
+                // leftovers (zeros or pixels of a column the run stopped
+                // at), which the next run overwrites, or which land in the
+                // buffer's slack at the end of the line. A fixed-size store
+                // is much cheaper than a copy of 1 to 8 bytes.
+                let pixels = Self::decode_row(attributes, pattern) << (fine * 8);
+                out[x..x + 8].copy_from_slice(&pixels.to_be_bytes());
+                x += (8 - fine).min(column_end - x);
+            }
         }
     }
 
@@ -334,12 +336,8 @@ impl Vdp {
             row
         };
         let addr = ((tile << info.tile_shift) + row * 4) as usize & 0xFFFC;
-        u32::from_be_bytes([
-            self.vram[addr],
-            self.vram[addr + 1],
-            self.vram[addr + 2],
-            self.vram[addr + 3],
-        ])
+        let bytes = &self.vram[addr..addr + 4];
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
 
     /// Turn a tile row into its 8 layer pixels, honouring horizontal flip,
