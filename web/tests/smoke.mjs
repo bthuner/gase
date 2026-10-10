@@ -90,12 +90,21 @@ try {
   const title = await page.title();
   check(title.startsWith('gase - '), `title follows the game: "${title}"`);
 
-  // Speed: frames per second while paced by the clock (no click yet, so
-  // no sound), then flat out.
+  // Speed: frames per second as paced (by the clock, or by the audio
+  // queue if this browser allows sound without a click), then flat out.
   await page.waitForTimeout(2200);
   const paced = await page.evaluate(() => ({ ...window.gase.stats }));
-  console.log(`     paced: ${paced.fps} emulated fps, ${paced.drawFps} drawn fps, ${paced.updateMs} ms per update, audio: ${paced.audio}`);
-  check(paced.fps >= 50 && paced.fps <= 65, 'runs at the console rate without sound');
+  const refresh = await page.evaluate(
+    () => new Promise((done) => {
+      let n = 0;
+      const t = performance.now();
+      const tick = () => (performance.now() - t < 1000 ? (n++, requestAnimationFrame(tick)) : done(n));
+      requestAnimationFrame(tick);
+    }),
+  );
+  console.log(`     display: ${refresh} requestAnimationFrame callbacks per second`);
+  console.log(`     paced: ${paced.fps} emulated fps, ${paced.drawFps} drawn fps, ${paced.updateMs} ms per update, audio: ${paced.audio}, pacing: ${paced.pace} ${paced.perTick}`);
+  check(paced.fps >= 50 && paced.fps <= 65, 'runs at the console rate');
   const bench = await page.evaluate(() => window.gase.bench(600));
   console.log(`     flat out: ${bench} fps (gase_bench, 600 frames)`);
   check(bench > 60, 'emulates faster than real time');
@@ -104,7 +113,7 @@ try {
   await page.mouse.click(5, 5);
   await page.waitForTimeout(2500);
   const audio = await page.evaluate(() => ({ ...window.gase.stats }));
-  console.log(`     with sound: ${audio.fps} emulated fps, ${audio.drawFps} drawn fps, audio: ${audio.audio}`);
+  console.log(`     with sound: ${audio.fps} emulated fps, ${audio.drawFps} drawn fps, audio: ${audio.audio}, pacing: ${audio.pace} ${audio.perTick}`);
   check(audio.audio.includes('chunks') || audio.audio.includes('ring'), 'sound is running');
   check(audio.fps >= 50 && audio.fps <= 65, 'audio pacing holds the console rate');
 

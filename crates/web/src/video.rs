@@ -65,9 +65,12 @@ pub mod info {
     pub const PACE_VALUE: usize = 14;
     /// Frames emulated since the game was opened (for the page's fps meter).
     pub const FRAME: usize = 15;
+    /// The running game's frame rate × 1000 (59 922 NTSC, 49 701 PAL), or
+    /// 60 000 without a game: what the page's clock paces by.
+    pub const FPS: usize = 16;
 }
 /// Number of `u32`s in the frame description.
-pub const INFO_LEN: usize = 16;
+pub const INFO_LEN: usize = 17;
 
 pub const HAS_GAME: u32 = 1;
 pub const HAS_OVERLAY: u32 = 2;
@@ -172,6 +175,7 @@ mod tests {
             info::PACE,
             info::PACE_VALUE,
             info::FRAME,
+            info::FPS,
         ];
         for (i, &a) in all.iter().enumerate() {
             assert!(a < INFO_LEN);

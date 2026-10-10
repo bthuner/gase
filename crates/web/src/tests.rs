@@ -104,6 +104,7 @@ fn starts_on_the_home_screen_with_an_overlay() {
     );
     assert!(w * scale >= 1280 && h * scale >= 720, "{w}x{h} x{scale}");
     assert_eq!(i[info::PACE_VALUE], 60_000);
+    assert_eq!(i[info::FPS], 60_000);
 }
 
 #[test]
@@ -143,6 +144,7 @@ fn a_rom_from_the_page_runs_and_paces_by_audio() {
     // Without sound the clock paces, at the console's rate.
     assert_eq!(s.update(), PACE_TIMER);
     assert!(s.info()[info::PACE_VALUE] > 59_000);
+    assert_eq!(s.info()[info::FPS], s.info()[info::PACE_VALUE]);
     // With sound: the audio queue.
     s.platform.host.audio = Some(0);
     assert_eq!(s.update(), PACE_AUDIO);

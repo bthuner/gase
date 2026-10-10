@@ -368,6 +368,8 @@ impl<H: Host> Shell<H> {
         let (kind, value) = video::encode_pacing(pacing);
         self.info[info::PACE] = kind;
         self.info[info::PACE_VALUE] = value;
+        let fps = self.app.game().map_or(60.0, |g| g.genesis.frame_rate());
+        self.info[info::FPS] = (fps * 1000.0).round() as u32;
         kind
     }
 

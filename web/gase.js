@@ -15,11 +15,11 @@ import { AudioOut } from './audio.js';
 import { attachFiles, attachInput, pollGamepads } from './input.js';
 import { openStorage } from './storage.js';
 
-// The frame description, a [u32; 16] in wasm memory (crates/web/src/video.rs).
+// The frame description, a [u32; 17] in wasm memory (crates/web/src/video.rs).
 const INFO = {
   FLAGS: 0, GAME_PTR: 1, GAME_W: 2, GAME_H: 3, RECT_X: 4, RECT_Y: 5, RECT_W: 6, RECT_H: 7,
   OVERLAY_PTR: 8, OVERLAY_W: 9, OVERLAY_H: 10, OVERLAY_SCALE: 11, BACKGROUND: 12,
-  PACE: 13, PACE_VALUE: 14, FRAME: 15,
+  PACE: 13, PACE_VALUE: 14, FRAME: 15, FPS: 16,
 };
 const HAS_GAME = 1, HAS_OVERLAY = 2, OVERLAY_CHANGED = 4;
 const PACE_TIMER = 0, PACE_AUDIO = 1, PACE_UNTHROTTLED = 2;
@@ -202,8 +202,8 @@ function setVisible(canvas, visible) {
 /** Put the module's pictures into the two canvases. */
 function draw() {
   const ptr = wasm.gase_video() >>> 0;
-  const info = new Uint32Array(memory.buffer, ptr, 16);
-  const signed = new Int32Array(memory.buffer, ptr, 16);
+  const info = new Uint32Array(memory.buffer, ptr, 17);
+  const signed = new Int32Array(memory.buffer, ptr, 17);
   const flags = info[INFO.FLAGS];
 
   const game = (flags & HAS_GAME) !== 0;
@@ -280,18 +280,21 @@ function toStage(e) {
 
 // --- The main loop ------------------------------------------------------------------
 
-const stats = { fps: 0, drawFps: 0, updateMs: 0, frame: 0, audio: 'off' };
+const stats = { fps: 0, drawFps: 0, updateMs: 0, frame: 0, audio: 'off', pace: 'timer', perTick: [] };
 let pace = PACE_TIMER;
 let paceValue = 60_000;
-let due = 0; // frames owed by the clock (timer pacing)
+let consoleFps = 60;
+let due = 0; // frames owed by the clock
 let last = 0;
-let counted = { at: 0, updates: 0, draws: 0, busy: 0 };
+let counted = { at: 0, updates: 0, draws: 0, busy: 0, perTick: [0, 0, 0, 0, 0] };
 
 function update() {
   const t = performance.now();
   pace = wasm.gase_update();
-  // The pacing's value (fps or audio target) is in the frame description.
-  paceValue = new Uint32Array(memory.buffer, wasm.gase_info() >>> 0, 16)[INFO.PACE_VALUE];
+  // The pacing's details are in the frame description.
+  const info = new Uint32Array(memory.buffer, wasm.gase_info() >>> 0, 17);
+  paceValue = info[INFO.PACE_VALUE];
+  consoleFps = info[INFO.FPS] / 1000;
   counted.busy += performance.now() - t;
   counted.updates++;
 }
@@ -300,24 +303,26 @@ function update() {
 function framesDue(now) {
   const elapsed = Math.min(now - last, 250);
   last = now;
-  if (pace === PACE_UNTHROTTLED) return Infinity; // bounded by time below
+  if (pace === PACE_UNTHROTTLED) return Infinity; // bounded by time in frame()
+  // By the clock: the console's own rate (59.92 or 49.70 Hz), or the
+  // pacing's rate for menus. Rounding (not flooring) keeps the remainder
+  // within half a frame either side, so a 60 Hz display with a little
+  // jitter gets one frame per refresh rather than alternating 0 and 2.
+  const fps = pace === PACE_AUDIO ? consoleFps : paceValue / 1000;
+  due = Math.min(due + (elapsed * fps) / 1000, MAX_FRAMES_PER_TICK);
   if (pace === PACE_AUDIO && audio && audio.running) {
-    // Audio pacing: the sound card's clock decides. Emulate until the
-    // queue holds about `target` frames again; one emulated frame adds
-    // ~rate/60 frames. A dead band of half a frame either side makes the
-    // usual case exactly one frame per 60 Hz display frame, and the app's
-    // dynamic rate control keeps the queue centred in the band.
-    const target = paceValue;
-    const perFrame = audio.rate / 60;
-    const n = Math.round((target - audio.queued()) / perFrame) + 1;
-    return Math.max(0, Math.min(n, MAX_FRAMES_PER_TICK));
+    // With sound, the audio queue steers as well (the app's Pacing::Audio:
+    // keep about `target` frames queued). Only a clear deviation counts:
+    // the level is an estimate without SharedArrayBuffer, and devices
+    // consume audio in bursts. Small, slow drift between the sound card's
+    // clock and the console's is the app's dynamic rate control's job.
+    const behind = (paceValue - audio.queued()) / (audio.rate / consoleFps);
+    if (behind > 2) due += 1; // about to run dry: catch up a frame
+    else if (behind < -2) due = Math.max(due - 1, -1); // too much queued: let it drain
   }
-  // Timer pacing: the console's own rate (59.92 or 49.70 Hz) or 60 for
-  // menus, by the clock, whatever the display's refresh rate.
-  due = Math.min(due + (elapsed * paceValue) / 1e6, MAX_FRAMES_PER_TICK);
-  const n = Math.floor(due);
+  const n = Math.max(0, Math.round(due));
   due -= n;
-  return n;
+  return Math.min(n, MAX_FRAMES_PER_TICK);
 }
 
 function frame(now) {
@@ -335,6 +340,7 @@ function frame(now) {
       // back to normal pacing as soon as the app says so.
       if (n === Infinity && (pace !== PACE_UNTHROTTLED || performance.now() - start > 12)) break;
     }
+    counted.perTick[Math.min(ran, 4)]++;
     if (ran > 0) {
       draw();
       counted.draws++;
@@ -345,8 +351,14 @@ function frame(now) {
       stats.drawFps = Math.round(counted.draws / seconds);
       stats.updateMs = counted.updates ? +(counted.busy / counted.updates).toFixed(2) : 0;
       stats.audio = audio ? (audio.running ? audio.mode : audio.ctx.state) : 'none';
-      counted = { at: now, updates: 0, draws: 0, busy: 0 };
-      if (statsBox) statsBox.textContent = `${stats.fps} fps · ${stats.updateMs} ms/frame · ${stats.audio}`;
+      stats.queuedMs = audio?.running ? Math.round((audio.queued() * 1000) / audio.rate) : 0;
+      stats.pace = ['timer', 'audio', 'fast-forward'][pace];
+      stats.perTick = counted.perTick; // display frames that emulated 0, 1, 2… frames
+      counted = { at: now, updates: 0, draws: 0, busy: 0, perTick: [0, 0, 0, 0, 0] };
+      if (statsBox) {
+        statsBox.textContent = `${stats.fps} fps · ${stats.updateMs} ms/frame · ${stats.audio}` +
+          (stats.queuedMs ? ` · ${stats.queuedMs} ms queued` : '');
+      }
     }
   } catch (e) {
     crash(e.message || String(e));
