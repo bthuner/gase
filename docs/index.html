@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The making of gase</title>
+<meta name="description" content="How gase, a Sega Mega Drive / Genesis emulator written in Rust to be read and learned from, was designed, validated and built: one crate per chip, millions of CPU test vectors, a VDP drawn line by line, FM sound, a debugger for learners.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0d0c0b">
+<meta property="og:title" content="The making of gase">
+<meta property="og:description" content="A Mega Drive emulator in Rust, built to be read. The story of how it was made.">
+<meta property="og:image" content="assets/img/r2r-frame.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/source-serif-4.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/site.css">
+<script>
+  // Before first paint: theme, and a flag that turns on reveal animations.
+  document.documentElement.classList.add("js");
+  try { var t = localStorage.getItem("gase-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<script src="assets/site.js" defer></script>
+</head>
+<body>
+<!--
+  How this page is organised (for whoever adds the next chapter):
+  * Each chapter is a <section class="chapter" id="..." data-title="...">
+    holding a .chapter-head and a .chapter-body, both on the 12-column .grid.
+    Column helpers: c-text (reading column), c-side (marginalia), c-fig
+    (figures), c-full. Copy an existing chapter and add it to the contents
+    list (#contents); the masthead picks up data-title by itself.
+  * Pictures of the emulator go in <figure class="screen k2"> (or k3):
+    they are scaled by whole numbers only and drawn with pixelated rendering.
+  * Every picture in assets/img/ is made by scripts/docs-screenshots.sh.
+-->
+<a class="skip" href="#main">Skip to the story</a>
+
+<header class="masthead">
+  <div class="grid">
+    <a class="brand" href="#top">gase<span>.</span></a>
+    <p class="where" aria-live="off"><span class="label">The making of</span> &nbsp;<b data-where>Contents</b></p>
+    <nav class="tools" aria-label="Site">
+      <a href="#contents">Contents</a>
+      <a href="https://github.com/bthuner/gase">Source</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">Light</button>
+    </nav>
+  </div>
+  <div class="progress" aria-hidden="true"></div>
+</header>
+
+<main id="main">
+
+<!-- ============================================================ HERO -->
+<section class="hero" id="top" aria-labelledby="title">
+  <div class="grid">
+    <p class="kicker"><span>The making of gase</span><span>A Sega Mega Drive / Genesis emulator in Rust</span><span>October 2026</span></p>
+    <h1 id="title">A Mega Drive you can read<span class="dot">.</span></h1>
+    <p class="standfirst">How an emulator was built to be <em>understood</em>: one crate per chip, every CPU checked against millions of recorded test cases, and a rule that every fast path keeps the readable version beside it.</p>
+    <p class="byline">gase · MIT licence · github.com/bthuner/gase</p>
+  </div>
+  <div class="grid hero-plate">
+    <figure class="screen k3 reveal">
+      <div class="crt"><img src="assets/img/r2r-frame.png" width="320" height="224" alt="Right 2 Repair, mid-fight: two cyan sword fighters on a field of rubble in front of a red city skyline, scores at the top."></div>
+      <figcaption><span class="fig-no">FIG. 0</span><b>Right 2 Repair</b> (Global Game Jam 2020), frame 1,200, as gase draws it: 320 × 224 pixels, 15 colours on screen out of the 512 the console can make. Shown at a whole-number scale, pixel for pixel.</figcaption>
+    </figure>
+    <ul class="facts reveal" aria-label="gase in numbers">
+      <li>Crates, one per chip <b>7</b></li>
+      <li>External dependencies of the core <b>0</b></li>
+      <li>Z80 test cases passed <b>1,604,000</b></li>
+      <li>68000 test cases run <b>1,310,060</b></li>
+      <li>Pull requests to get here <b>17</b></li>
+      <li>Speed-up from profiling <b>1.5–1.9×</b></li>
+      <li><span><code>unsafe</code> blocks</span> <b>0</b></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ CONTENTS -->
+<nav class="contents" id="contents" aria-labelledby="contents-h">
+  <div class="grid">
+    <h2 id="contents-h">Contents</h2>
+    <ol class="toc">
+      <li><a href="#why"><span class="n">01</span><span class="t">Is it viable?</span><span class="d">A study before the first line of code.</span></a></li>
+      <li><a href="#machine"><span class="n">02</span><span class="t">The machine</span><span class="d">Two CPUs, a video chip, two sound chips, one crystal.</span></a></li>
+      <li><a href="#crates"><span class="n">03</span><span class="t">One crate per chip</span><span class="d">Read the Z80 without knowing the VDP exists.</span></a></li>
+      <li><a href="#vectors"><span class="n">04</span><span class="t">Proving the CPUs right</span><span class="d">Millions of recorded instructions, compared bit for bit.</span></a></li>
+      <li><a href="#first-light"><span class="n">05</span><span class="t">First light</span><span class="d">Wiring the chips together and running real software.</span></a></li>
+      <li><a href="#frame"><span class="n">06</span><span class="t">Drawing a frame</span><span class="d">Planes, sprites, priorities: a picture taken apart.</span></a></li>
+      <li><a href="#sound"><span class="n">07</span><span class="t">Making sound</span><span class="d">FM synthesis without a multiplier.</span></a></li>
+      <li><a href="#odd-address"><span class="n">08</span><span class="t">The odd address</span><span class="d">A crash that turned out to be correct.</span></a></li>
+      <li><a href="#timing"><span class="n">09</span><span class="t">Timing is everything</span><span class="d">Access slots, a four-word FIFO, and a slower boot.</span></a></li>
+      <li><a href="#saves"><span class="n">10</span><span class="t">Saves, states and rewind</span><span class="d">From battery RAM to a bit-banged EEPROM.</span></a></li>
+      <li><a href="#debugger"><span class="n">11</span><span class="t">A debugger for learners</span><span class="d">Watch the console think.</span></a></li>
+      <li><a href="#performance"><span class="n">12</span><span class="t">Fast, and still readable</span><span class="d">A readable reference and a tested fast path.</span></a></li>
+      <li><a href="#practice"><span class="n">13</span><span class="t">How the work was done</span><span class="d">Branches, pull requests, CI, frame hashes.</span></a></li>
+      <li class="upcoming"><a href="#next"><span class="n">14</span><span class="t">What’s next</span><span class="d">A GUI for desktop, web and mobile. ZIP files.</span></a></li>
+    </ol>
+  </div>
+</nav>
+
+<!-- ============================================================ 01 WHY -->
+<section class="chapter" id="why" data-title="01 Is it viable?" aria-labelledby="why-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 01</span><span>docs/VIABILITY.md</span></div>
+    <p class="num" aria-hidden="true">01</p>
+    <h2 id="why-h">Is it viable?</h2>
+    <p class="dek">Before any code, a short study asked whether a Mega Drive emulator in Rust was a sensible project, and what it should put first.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">The answer was yes, for reasons that shaped everything that followed. The Mega Drive is one of the best-documented machines of its era: mature open emulators such as Genesis Plus GX, BlastEm, Exodus and clownmdemu exist, and between them almost every behaviour of the hardware has been measured and written down. Nothing had to be guessed; it had to be understood and written clearly.</p>
+      <p>The goals were ranked, and the ranking mattered. <strong>Pedagogy</strong> first: someone should be able to open the source and learn how the console works. Then <strong>performance</strong>, <strong>compatibility</strong>, <strong>quality of life</strong>, and finally <strong>best practices with few dependencies</strong>. When two goals pulled in different directions, the higher one won.</p>
+      <p>Rust suited those goals. Hardware arithmetic is explicit (<code>wrapping_add</code>, <code>u16::from_be_bytes</code>), so the code shows what the chip does to every bit. Generics with static dispatch let a CPU core talk to the memory map at no cost while staying a standalone crate. And <code>#![forbid(unsafe_code)]</code> turned out to be realistic: nothing here needs it.</p>
+      <h3>Performance was not the risk</h3>
+      <p>A 7.67 MHz 68000 executes one to two million instructions a second. A plain interpreter in Rust handles that in a few percent of one modern core. The study concluded that speed could be spent on accuracy and on comforts such as rewind. The real risks were elsewhere: the exactness of the 68000, the VDP’s timing tricks, the YM2612’s sound, odd cartridge hardware, and keeping audio and video in sync without crackles. Each one later got its own chapter.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">The estimate</span><p>About 10,000 lines of Rust for “a solid, game-compatible emulator”. The study was right about the shape and low on the size: the source is now about 20,000 lines, a fifth of them comments that teach.</p></div>
+      <div class="bignum"><b>53.69<small> MHz</small></b><span>The master clock of an NTSC console, 53,693,175 ticks a second. Every chip runs at a fraction of it, and gase schedules everything against it.</span></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+      <div class="legend" aria-hidden="true"><span><i class="est"></i>Estimated in the study (upper bound)</span><span><i class="act"></i>Lines in <code>src/</code> today, comments and unit tests included</span></div>
+      <div class="table-wrap">
+      <table class="crates">
+        <thead><tr><th scope="col">Part</th><th scope="col">Crate</th><th scope="col" class="r">Estimate</th><th scope="col" class="r">Today</th><th scope="col" class="bar-cell"><span class="visually-hidden">Comparison</span></th></tr></thead>
+        <tbody>
+          <tr><th scope="row">68000</th><td><code>gase-m68k</code></td><td class="r">3,000–4,000</td><td class="r">4,618</td><td class="bar-cell"><div class="bar"><i class="est" style="width:65%"></i><i class="act" style="width:75%;height:4px;top:3px"></i></div></td></tr>
+          <tr><th scope="row">Z80</th><td><code>gase-z80</code></td><td class="r">~2,000</td><td class="r">2,517</td><td class="bar-cell"><div class="bar"><i class="est" style="width:32.5%"></i><i class="act" style="width:41%;height:4px;top:3px"></i></div></td></tr>
+          <tr><th scope="row">VDP</th><td><code>gase-vdp</code></td><td class="r">1,500–2,000</td><td class="r">3,008</td><td class="bar-cell"><div class="bar"><i class="est" style="width:32.5%"></i><i class="act" style="width:49%;height:4px;top:3px"></i></div></td></tr>
+          <tr><th scope="row">YM2612 + PSG</th><td><code>gase-sound</code></td><td class="r">~1,150</td><td class="r">3,138</td><td class="bar-cell"><div class="bar"><i class="est" style="width:18.7%"></i><i class="act" style="width:51%;height:4px;top:3px"></i></div></td></tr>
+          <tr><th scope="row">Bus, I/O, cartridge</th><td><code>gase-core</code></td><td class="r">~800</td><td class="r">3,687</td><td class="bar-cell"><div class="bar"><i class="est" style="width:13%"></i><i class="act" style="width:60%;height:4px;top:3px"></i></div></td></tr>
+          <tr><th scope="row">Frontend</th><td><code>gase</code></td><td class="r">~600</td><td class="r">2,913</td><td class="bar-cell"><div class="bar"><i class="est" style="width:9.8%"></i><i class="act" style="width:47%;height:4px;top:3px"></i></div></td></tr>
+        </tbody>
+        <caption>The biggest overshoots bought features the study did not count: the scheduler, save states, EEPROM saves and the debugger live in <code>gase-core</code> and <code>gase</code>, and the sound crate also holds a resampler and filters. Bars are scaled to 6,150 lines.</caption>
+      </table>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ 02 MACHINE -->
+<section class="chapter" id="machine" data-title="02 The machine" aria-labelledby="machine-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 02</span><span>docs/ARCHITECTURE.md §1–3</span></div>
+    <p class="num" aria-hidden="true">02</p>
+    <h2 id="machine-h">The machine</h2>
+    <p class="dek">Two processors that share nothing but a few doors, a video chip with its own memory, two sound chips, and one crystal that sets the beat for all of them.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p>The 68000 runs the game. It sees the cartridge, 64 KiB of work RAM, the controller ports and the video chip’s two ports in one 24-bit address space. The Z80, a separate 8-bit computer with 8 KiB of its own RAM, drives the sound chips; the 68000 can stop it, load a program into its RAM and restart it, and the Z80 can look into the 68000’s memory through a 32 KiB window.</p>
+      <p>The VDP is never addressed like memory. Its 64 KiB of VRAM, its palette (CRAM) and its vertical scroll table (VSRAM) are only reachable through a control port and a data port, which is why so much of a game’s code is about feeding those two ports at the right moment.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">Try it</span><p>Point at a chip in the diagram, or move through it with the Tab key, to see what it does and which crate emulates it.</p></div>
+    </aside>
+    <figure class="c-full figure machine reveal" aria-labelledby="machine-cap">
+      <div class="plate scroll-x" tabindex="0" aria-label="Diagram of the Mega Drive (scrolls sideways on small screens)">
+        <svg viewBox="0 0 1200 770" role="group" aria-label="Block diagram of the Mega Drive">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" class="arrow"/></marker>
+  </defs>
+  <!-- master clock -->
+  <path class="clock" d="M140 358H182M182 115V690M182 115H230M182 690H230M182 455H640"/>
+  <text class="clock-label" x="190" y="106">÷7</text>
+  <text class="clock-label" x="190" y="681">÷15</text>
+  <text class="clock-label" x="500" y="447">master clock</text>
+
+  <!-- 68000 bus -->
+  <path class="bus" d="M230 240H1170"/>
+  <text class="bus-label" x="500" y="230">68000 BUS · 24-BIT ADDRESS · 16-BIT DATA</text>
+  <path class="wire" d="M355 190V240M660 150V240M875 150V240M1080 150V240M720 240V310M300 240V300"/>
+  <!-- Z80 bus -->
+  <path class="bus" d="M230 590H1000"/>
+  <text class="bus-label" x="500" y="580">Z80 BUS · 16-BIT ADDRESS · 8-BIT DATA</text>
+  <path class="wire" d="M355 390V590M355 590V630M605 590V630M855 590V630M915 590V480"/>
+  <text class="out" x="922" y="560">7F11</text>
+  <!-- VDP memories, outputs -->
+  <path class="wire" d="M970 338H1010M970 402H1010M970 464H1010"/>
+  <path class="wire" d="M880 500V540H1165" marker-end="url(#arr)"/>
+  <text class="out" x="1000" y="530">VIDEO OUT</text>
+  <path class="wire" d="M950 470H990V690" stroke-dasharray="2 3"/>
+  <path class="wire" d="M980 690H1165" marker-end="url(#arr)"/>
+  <circle cx="990" cy="690" r="4" class="arrow"/>
+  <text class="out" x="1010" y="680">AUDIO OUT</text>
+
+  <g class="chip mem" data-part="xtal" tabindex="0" role="button" aria-describedby="part-xtal">
+    <title>Master clock crystal</title>
+    <rect class="body" x="30" y="330" width="110" height="56"/>
+    <text class="name" x="85" y="364" text-anchor="middle">XTAL</text>
+    <text class="sub" x="30" y="408">53.693175 MHz</text>
+  </g>
+  <g class="chip" data-part="m68k" tabindex="0" role="button" aria-describedby="part-m68k">
+    <title>Motorola 68000</title>
+    <path class="pin" d="M250 40v-10M270 40v-10M290 40v-10M310 40v-10M330 40v-10M350 40v-10M370 40v-10M390 40v-10M410 40v-10M430 40v-10M450 40v-10M470 40v-10"/>
+    <rect class="body" x="230" y="40" width="250" height="150"/>
+    <text class="name" x="250" y="80">MC68000</text>
+    <text class="sub" x="250" y="106">main CPU · 7.67 MHz</text>
+    <text class="sub" x="250" y="126">32-bit registers</text>
+    <text class="crate" x="250" y="172">gase-m68k</text>
+  </g>
+  <g class="chip mem" data-part="cart" tabindex="0" role="button" aria-describedby="part-cart">
+    <title>Cartridge</title>
+    <rect class="body" x="560" y="40" width="200" height="110"/>
+    <text class="name" x="578" y="72">Cartridge</text>
+    <text class="sub" x="578" y="96">ROM · SRAM · EEPROM</text>
+    <text class="sub" x="578" y="134">000000–3FFFFF</text>
+  </g>
+  <g class="chip mem" data-part="ram" tabindex="0" role="button" aria-describedby="part-ram">
+    <title>Work RAM</title>
+    <rect class="body" x="790" y="40" width="170" height="110"/>
+    <text class="name" x="808" y="72">Work RAM</text>
+    <text class="sub" x="808" y="96">64 KiB</text>
+    <text class="sub" x="808" y="134">E00000–FFFFFF</text>
+  </g>
+  <g class="chip mem" data-part="io" tabindex="0" role="button" aria-describedby="part-io">
+    <title>I/O: controllers and version register</title>
+    <rect class="body" x="990" y="40" width="180" height="110"/>
+    <text class="name" x="1008" y="72">I/O</text>
+    <text class="sub" x="1008" y="96">pads · region</text>
+    <text class="sub" x="1008" y="134">A10000</text>
+  </g>
+  <g class="chip mem" data-part="arbiter" tabindex="0" role="button" aria-describedby="part-arbiter">
+    <title>Bus arbiter and Z80 bank window</title>
+    <rect class="body" x="230" y="300" width="250" height="90"/>
+    <text class="name" x="248" y="330">Bus arbiter</text>
+    <text class="sub" x="248" y="354">A11100 request · A11200 reset</text>
+    <text class="sub" x="248" y="374">Z80 6000: bank → 8000</text>
+  </g>
+  <g class="chip" data-part="vdp" tabindex="0" role="button" aria-describedby="part-vdp">
+    <title>VDP, Sega 315-5313</title>
+    <path class="pin" d="M660 310v-8M690 310v-8M750 310v-8M780 310v-8M810 310v-8M840 310v-8M870 310v-8M900 310v-8M930 310v-8"/>
+    <rect class="body" x="640" y="310" width="330" height="190"/>
+    <text class="name" x="660" y="350">VDP</text>
+    <text class="sub" x="660" y="374">Sega 315-5313</text>
+    <text class="sub" x="660" y="394">ports at C00000</text>
+    <text class="crate" x="660" y="484">gase-vdp</text>
+  </g>
+  <g class="chip mem" data-part="psg" tabindex="0" role="button" aria-describedby="part-psg">
+    <title>PSG, SN76489 compatible</title>
+    <rect class="body" x="830" y="420" width="120" height="60"/>
+    <text class="name" x="845" y="446">PSG</text>
+    <text class="sub" x="845" y="466">SN76489</text>
+  </g>
+  <g class="chip mem" data-part="vram" tabindex="0" role="button" aria-describedby="part-vram">
+    <title>VRAM, CRAM and VSRAM</title>
+    <rect class="body" x="1010" y="312" width="160" height="52"/>
+    <text class="name" x="1026" y="336">VRAM</text><text class="sub" x="1026" y="354">64 KiB</text>
+    <rect class="body" x="1010" y="376" width="160" height="52"/>
+    <text class="name" x="1026" y="400">CRAM</text><text class="sub" x="1026" y="418">64 × 9 bit</text>
+    <rect class="body" x="1010" y="438" width="160" height="52"/>
+    <text class="name" x="1026" y="462">VSRAM</text><text class="sub" x="1026" y="480">40 × 11 bit</text>
+  </g>
+  <g class="chip" data-part="z80" tabindex="0" role="button" aria-describedby="part-z80">
+    <title>Zilog Z80</title>
+    <rect class="body" x="230" y="630" width="250" height="110"/>
+    <path class="pin" d="M250 740v8M275 740v8M300 740v8M325 740v8M350 740v8M375 740v8M400 740v8M425 740v8M450 740v8"/>
+    <text class="name" x="250" y="668">Z80</text>
+    <text class="sub" x="250" y="692">sound CPU · 3.58 MHz</text>
+    <text class="crate" x="250" y="724">gase-z80</text>
+  </g>
+  <g class="chip mem" data-part="zram" tabindex="0" role="button" aria-describedby="part-zram">
+    <title>Sound RAM</title>
+    <rect class="body" x="520" y="630" width="170" height="90"/>
+    <text class="name" x="538" y="662">Sound RAM</text>
+    <text class="sub" x="538" y="686">8 KiB</text>
+    <text class="sub" x="538" y="706">0000–1FFF</text>
+  </g>
+  <g class="chip" data-part="ym" tabindex="0" role="button" aria-describedby="part-ym">
+    <title>Yamaha YM2612</title>
+    <rect class="body" x="730" y="630" width="230" height="110"/>
+    <path class="pin" d="M750 740v8M775 740v8M800 740v8M825 740v8M850 740v8M875 740v8M900 740v8M925 740v8"/>
+    <text class="name" x="750" y="668">YM2612</text>
+    <text class="sub" x="750" y="692">FM · 6 voices · 4000</text>
+    <text class="crate" x="750" y="724">gase-sound</text>
+  </g>
+</svg>
+      </div>
+      <figcaption id="machine-cap"><span class="fig-no">FIG. 1</span>The Mega Drive as gase models it. Solid lines are buses, the dashed gold line is the master clock. Addresses are where the 68000 (top) and the Z80 (bottom) find each part. <span class="scroll-hint">Scroll sideways to see all of it.</span></figcaption>
+    </figure>
+    <div class="c-full figure">
+      <ul class="parts" data-parts>
+        <li id="part-xtal" data-part="xtal"><h4>Master clock <small>gase-core · system.rs</small></h4><p>53.693175 MHz on NTSC consoles (53.203424 MHz on PAL). Every chip runs at a fraction of it, so gase keeps time in master clocks.</p></li>
+        <li id="part-m68k" data-part="m68k"><h4>Motorola 68000 <small>gase-m68k</small></h4><p>The main CPU at master ÷ 7 ≈ 7.67 MHz. 32-bit registers, a 16-bit data bus, 24 address lines. Runs the game.</p></li>
+        <li id="part-cart" data-part="cart"><h4>Cartridge <small>gase-core · cartridge.rs</small></h4><p>ROM at <code>000000</code>, plus battery SRAM or a serial EEPROM for saves, and the SSF2 mapper for ROMs over 4 MiB.</p></li>
+        <li id="part-ram" data-part="ram"><h4>Work RAM <small>gase-core · bus.rs</small></h4><p>64 KiB at <code>E00000</code>–<code>FFFFFF</code>, mirrored. The stack grows down from the top of it.</p></li>
+        <li id="part-io" data-part="io"><h4>I/O <small>gase-core · io.rs</small></h4><p>The version register (region, PAL/NTSC) and the controller ports, including the 6-button pad’s timed protocol.</p></li>
+        <li id="part-arbiter" data-part="arbiter"><h4>Bus arbiter <small>gase-core · bus.rs</small></h4><p>Lets the 68000 take the Z80’s bus (<code>A11100</code>) or hold it in reset (<code>A11200</code>), and gives the Z80 a banked window into 68000 space.</p></li>
+        <li id="part-vdp" data-part="vdp"><h4>VDP, Sega 315-5313 <small>gase-vdp</small></h4><p>Two scrolling tile planes, a window and 80 sprites, 64 colours on screen out of 512. One scanline every 3,420 master clocks.</p></li>
+        <li id="part-vram" data-part="vram"><h4>VRAM, CRAM, VSRAM <small>gase-vdp</small></h4><p>64 KiB of tiles and tables, 64 nine-bit colours, 40 vertical scroll values. Only the VDP touches them directly.</p></li>
+        <li id="part-z80" data-part="z80"><h4>Zilog Z80 <small>gase-z80</small></h4><p>The sound CPU at master ÷ 15 ≈ 3.58 MHz, with 8 KiB of private RAM. Streams music data and drum samples to the sound chips.</p></li>
+        <li id="part-zram" data-part="zram"><h4>Sound RAM <small>gase-core · bus.rs</small></h4><p>8 KiB at Z80 address <code>0000</code>, mirrored at <code>2000</code>. Where the sound driver lives.</p></li>
+        <li id="part-ym" data-part="ym"><h4>Yamaha YM2612 <small>gase-sound</small></h4><p>Six FM channels of four operators each, one stereo sample every 144 of its clocks (≈ 53,267 Hz). Channel 6 can play 8-bit samples.</p></li>
+        <li id="part-psg" data-part="psg"><h4>PSG, SN76489 <small>gase-sound</small></h4><p>Built into the VDP: three square waves and a noise generator, at master ÷ 15.</p></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 03 CRATES -->
+<section class="chapter" id="crates" data-title="03 One crate per chip" aria-labelledby="crates-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 03</span><span>Cargo workspace</span></div>
+    <p class="num" aria-hidden="true">03</p>
+    <h2 id="crates-h">One crate per chip</h2>
+    <p class="dek">The source is organised like the circuit board. You can read the Z80 without knowing that a VDP exists.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Each chip lives in its own crate, with module documentation written as a short course on that chip: the 68000’s registers and addressing modes, the Z80’s undocumented flags, the VDP’s tile formats, FM synthesis as the YM2612 actually computes it. The crates were built in parallel, on separate branches, before anything connected them.</p>
+      <p>What lets them stay apart is a small trait. Each CPU says what it needs from the outside world and nothing more:</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">Dependencies</span><p>Every crate except the frontend has <b>no external dependencies</b>. The frontend has one, SDL2, for the window, sound and gamepads, and it is optional: without it <code>gase</code> builds as a headless runner, which is how every picture on this page was made.</p></div>
+    </aside>
+    <div class="c-wide figure reveal">
+<pre><code><span class="c">// gase-m68k: everything the 68000 needs to know about the console.</span>
+<span class="k">pub trait</span> Bus {
+    <span class="k">fn</span> read_byte(&amp;<span class="k">mut</span> self, addr: u32) -&gt; u8;
+    <span class="k">fn</span> read_word(&amp;<span class="k">mut</span> self, addr: u32) -&gt; u16;
+    <span class="k">fn</span> write_byte(&amp;<span class="k">mut</span> self, addr: u32, value: u8);
+    <span class="k">fn</span> write_word(&amp;<span class="k">mut</span> self, addr: u32, value: u16);
+    <span class="c">// interrupt acknowledge, RESET, TAS ... (with defaults)</span>
+}
+
+<span class="k">impl</span> M68k {
+    <span class="c">/// Runs one instruction; returns the 68000 clock cycles it took.</span>
+    <span class="k">pub fn</span> step&lt;B: Bus&gt;(&amp;<span class="k">mut</span> self, bus: &amp;<span class="k">mut</span> B) -&gt; u32 { <span class="dim">…</span> }
+}</code></pre>
+    </div>
+    <div class="c-text prose figure">
+      <p>Because <code>step</code> is generic, the compiler produces a copy specialised for the console’s real memory map, with memory accesses as direct and often inlined calls. Tests hand the very same CPU a flat array of RAM instead.</p>
+      <p>One design choice comes straight from Rust’s borrow rules. While the 68000 runs it holds a mutable borrow of the hardware, so it cannot also live <em>inside</em> the hardware. The CPUs therefore sit beside <code>Hardware</code> in the <code>Genesis</code> struct, and the Z80 reaches the same hardware through a thin wrapper that applies the Z80’s own memory map. The constraint ended up documenting the machine: two processors, one set of shared devices.</p>
+    </div>
+    <div class="c-fig figure reveal">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Crate</th><th scope="col">What it is</th><th scope="col">What its docs teach</th></tr></thead>
+        <tbody>
+          <tr><td><code>gase-savestate</code></td><td>A tiny binary format</td><td>Serialising state in a fixed order, with no schema</td></tr>
+          <tr><td><code>gase-m68k</code></td><td>Motorola 68000</td><td>Registers, the 12 addressing modes, the prefetch queue, exceptions, cycle counting</td></tr>
+          <tr><td><code>gase-z80</code></td><td>Zilog Z80</td><td>Prefix pages, undocumented X/Y flags, WZ (MEMPTR), the Q latch, interrupt modes</td></tr>
+          <tr><td><code>gase-vdp</code></td><td>Sega 315-5313 VDP</td><td>Tiles, name tables, sprites, priority, access slots, the FIFO, three kinds of DMA</td></tr>
+          <tr><td><code>gase-sound</code></td><td>YM2612, SN76489, resampler</td><td>FM synthesis, log-sin tables, envelopes, the ladder effect, windowed-sinc resampling</td></tr>
+          <tr><td><code>gase-core</code></td><td>The console</td><td>Memory maps, the scheduler, cartridges, EEPROM over I²C, save states, rewind</td></tr>
+          <tr><td><code>gase</code></td><td>The program</td><td>Audio-paced frame timing, a debugger drawn into a pixel buffer, PNG and WAV by hand</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 04 VECTORS -->
+<section class="chapter" id="vectors" data-title="04 Proving the CPUs right" aria-labelledby="vectors-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 04</span><span>crates/m68k/tests · crates/z80/tests</span></div>
+    <p class="num" aria-hidden="true">04</p>
+    <h2 id="vectors-h">Proving the CPUs right</h2>
+    <p class="dek">A CPU emulator is either exactly right or quietly wrong. The only way to know is to compare it, instruction by instruction, with recordings of the real thing.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">A <em>test vector</em> is one instruction, frozen. It records every register and the relevant bytes of memory before the instruction, the same after it, and the bus activity in between. Run the instruction from the “before” state; if a single bit or cycle differs from “after”, the test fails.</p>
+      <p>Here is a real one, the first of the 1,000 cases for Z80 opcode <code>80</code>, <code>ADD A,B</code>, shortened:</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>2.9<small> million</small></b><span>CPU test cases in the suites gase is checked against: 1,604,000 for the Z80, 1,310,060 for the 68000.</span></div>
+    </aside>
+    <div class="c-wide figure reveal">
+<pre><code><span class="c">// target/test-vectors/z80/80.json, case "80 0000" (SingleStepTests)</span>
+initial: pc=51399  a=<mark>81</mark>  b=<mark>92</mark>  f=167  r=112  q=0    ram[51399]=128 <span class="c">(the opcode)</span>
+final:   pc=51400  a=<mark>173</mark> b=92  f=172  r=113  q=172
+cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refresh</span></code></pre>
+      <p class="caption">81 + 92 = 173. The flags become 172: sign and overflow set (81 + 92 does not fit in a signed byte), plus undocumented copies of bits 5 and 3 of the result. The refresh register R ticks once per opcode fetch, and the hidden Q latch remembers the flags this instruction wrote: <code>SCF</code> and <code>CCF</code> later read it. gase models all of it.</p>
+    </div>
+    <div class="c-text prose figure">
+      <p>The Z80 core passes all 1,604,000 SingleStepTests cases, comparing every register including the hidden ones, RAM, port I/O and cycle counts. It also passes ZEXDOC and ZEXALL, the classic exercisers that run on the CPU itself and checksum the results of millions of operations.</p>
+      <p>The 68000 is harder: dozens of addressing modes, exact cycle counts, a two-word prefetch queue, and exceptions that abort an instruction halfway. gase models the prefetch queue exactly and counts time the way the chip spends it, four cycles per bus access plus internal work, so the counts match Motorola’s tables by construction rather than by lookup.</p>
+    </div>
+    <figure class="c-fig figure chart reveal">
+      <div class="scroll-x chart-scroll"><svg viewBox="0 0 1000 330" role="img" aria-labelledby="vec-t">
+<title id="vec-t">CPU test vectors run against gase, by suite</title>
+<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="none"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--gold)" stroke-width="3"/></pattern></defs>
+<g class="row"><text class="lab" x="0" y="20"><tspan font-weight="800">Z80</tspan>  SingleStepTests</text>
+<rect class="m-ink" x="0" y="34" width="1000.0" height="26" rx="0"><title>SingleStepTests: 1,604,000 pass</title></rect>
+<text class="val" x="0" y="84">1,604,000 vectors</text>
+<text class="lab-2" x="1000" y="84" text-anchor="end">all pass, + ZEXDOC and ZEXALL</text></g>
+<g class="row"><text class="lab" x="0" y="125"><tspan font-weight="800">68000</tspan>  SingleStepTests/m68000 (from MAME)</text>
+<rect class="m-ink" x="0" y="139" width="193.3" height="26" rx="0"><title>SingleStepTests/m68000 (from MAME): 310,000 pass</title></rect>
+<text class="val" x="0" y="189">310,000 vectors</text>
+<text class="lab-2" x="1000" y="189" text-anchor="end">all pass</text></g>
+<g class="row"><text class="lab" x="0" y="230"><tspan font-weight="800">68000</tspan>  Tom Harte ProcessorTests</text>
+<rect class="m-ink" x="0" y="244" width="505.3" height="26" rx="0"><title>Tom Harte ProcessorTests: 810,572 pass</title></rect>
+<rect class="m-hatch" x="507.3" y="244" width="116.1" height="26"><title>189,488 excused: Tom Harte disagrees with the microcode and the manual</title></rect>
+<text class="val" x="0" y="294">1,000,060 vectors</text>
+<text class="lab-2" x="1000" y="294" text-anchor="end">810,572 pass; 189,488 excused</text></g>
+</svg></div>
+      <figcaption><span class="fig-no">FIG. 2</span>Every suite gase’s CPUs are checked against. The hatched part of the Tom Harte suite is excused, for the reasons below; nothing fails without an explanation. The vectors are downloaded on demand and run weekly in CI.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>When two references disagree</h3>
+      <p>The two 68000 suites contradict each other in places, so the core had to pick a side. It follows the suite generated from MAME’s microcode-level 68000, which also agrees with Motorola’s manual, and passes all 310,000 of its cases. Tom Harte’s cases are excused only when they fall into a known, documented category <em>and</em> fail: the stacked program counter and cycle counts of address errors (about 178,000 cases), the flags of shifts by more than the operand size, the timing of <code>ADDQ.L</code> to an address register, a few division edge cases, <code>LINK A7</code>, and two corrupt vectors. Before switching to the microcode model of address errors, the core passed about 99.5% of Tom Harte’s suite.</p>
+      <p>That decision about address errors, a corner that commercial games never reach, turned out to matter sooner than expected. See chapter 08.</p>
+    </div>
+    <aside class="c-side side figure">
+      <div class="note"><span class="label">How fast</span><p>The Z80 core runs ZEXALL at about 800 million T-states a second, some 220 times the speed of the console’s Z80. The 68000 core managed about 49 million instructions a second on a mixed loop, before any optimisation.</p></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============================================================ 05 FIRST LIGHT -->
+<section class="chapter" id="first-light" data-title="05 First light" aria-labelledby="first-light-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 05</span><span>crates/core/src/system.rs</span></div>
+    <p class="num" aria-hidden="true">05</p>
+    <h2 id="first-light-h">First light</h2>
+    <p class="dek">Four validated chips are not yet a console. Something has to decide who runs when.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">The scheduler in <code>gase-core</code> runs the console one scanline at a time. At the start of each line the VDP draws it. Then the 68000 executes instructions up to the next event on that line (the vertical interrupt, horizontal blanking, the end of the line), and after every 68000 instruction the Z80 catches up to the same master-clock time. The two CPUs never drift more than one instruction apart.</p>
+      <p>The sound chips are not stepped in that loop at all. They are brought up to date <em>lazily</em>: only when a CPU writes to them, so that the write lands at exactly the right sample, and at the end of the frame. When nobody is listening, catching up costs nothing.</p>
+      <p>The first real programs were five freely licensed test ROMs, chosen to cover different parts of the machine. Each became a regression test: run for a fixed number of frames, with scripted button presses, then hash the picture. A hash was only recorded after the frame had been checked by eye.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>11–13×</b><span>real time in the first headless benchmark, before any profiling or optimisation.</span></div>
+      <div class="note"><span class="label">No I/O in the core</span><p><code>gase-core</code> takes ROM bytes and button states and returns pixels and audio samples. Any frontend, including the GUI now in progress, sits on top.</p></div>
+    </aside>
+    <div class="c-full figure filmstrip reveal">
+      <figure><div class="crt"><img src="assets/img/240p-menu.png" width="320" height="224" loading="lazy" alt="The 240p Test Suite main menu: a menu of tests on a grey panel with a cartoon portrait of the author."></div><figcaption><b>240p Test Suite</b> 1.23, frame 300. A broad video test: patterns, scrolling, sprites, sound. GPL.</figcaption></figure>
+      <figure><div class="crt"><img src="assets/img/testpattern.png" width="320" height="224" loading="lazy" alt="SMPTE colour bars in the Mega Drive's palette."></div><figcaption><b>genmd-imgrom</b> test pattern, frame 120. Matches the author’s reference screenshot to within DAC levels. MIT.</figcaption></figure>
+      <figure><div class="crt"><img src="assets/img/airstriker-sega.png" width="320" height="224" loading="lazy" alt="A blue SEGA logo on black."></div><figcaption><b>Airstriker</b>, frame 60. A shooter compiled with BasiEgaXorz. Freeware. Its story is chapter 08.</figcaption></figure>
+      <figure><div class="crt"><img src="assets/img/right2repair-title.png" width="320" height="224" loading="lazy" alt="The Right 2 Repair title: a riveted metal sign and PRESS START."></div><figcaption><b>Right 2 Repair</b>, frame 600. An SGDK game with a Z80 sound driver. Global Game Jam 2020.</figcaption></figure>
+      <figure><div class="crt"><img src="assets/img/spiral.png" width="320" height="224" loading="lazy" alt="Hundreds of blue particles forming the letters RSE."></div><figcaption><b>The Spiral</b> by Resistance, frame 1,200. A 3.9 MiB demo with heavy DMA and raster effects. GPL.</figcaption></figure>
+      <div class="cases">
+        <p class="label">crates/core/tests/test_roms.rs</p>
+        <table>
+          <thead><tr><th scope="col">Regression case</th><th scope="col" class="r">Frames</th></tr></thead>
+          <tbody>
+            <tr><td>240p Test Suite, main menu</td><td class="r">300</td></tr>
+            <tr><td>240p Test Suite, PLUGE (two A presses)</td><td class="r">400</td></tr>
+            <tr><td>genmd-imgrom test pattern</td><td class="r">120</td></tr>
+            <tr><td>Airstriker, SEGA logo</td><td class="r">60</td></tr>
+            <tr><td>Airstriker, main menu (lenient)</td><td class="r">700</td></tr>
+            <tr><td>Right 2 Repair, title</td><td class="r">600</td></tr>
+            <tr><td>The Spiral</td><td class="r">1,200</td></tr>
+          </tbody>
+        </table>
+        <p class="caption">Each case ends with a 64-bit FNV-1a hash of the picture.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 06 FRAME -->
+<section class="chapter" id="frame" data-title="06 Drawing a frame" aria-labelledby="frame-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 06</span><span>crates/vdp/src/render.rs</span></div>
+    <p class="num" aria-hidden="true">06</p>
+    <h2 id="frame-h">Drawing a frame</h2>
+    <p class="dek">There is no frame buffer to draw into. The VDP builds every line on the fly from small tiles, maps of tiles, and a list of sprites.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Everything on screen is made of <em>tiles</em>: 8 × 8 pixels, four bits per pixel, 32 bytes each. A pixel’s four bits pick one of 16 colours in one of four palettes; colour 0 is transparent. Two <em>planes</em>, A and B, are scrollable maps of tiles in which each entry chooses a tile, a palette, horizontal and vertical flips and a priority bit. A <em>window</em> can replace plane A in a fixed rectangle, for status bars that must not scroll. On top come up to 80 <em>sprites</em>, kept in a linked list.</p>
+      <p>Below is one real frame of Right 2 Repair taken apart. Each layer was drawn by gase’s own renderer with the other layers hidden, so this is exactly what the VDP combines.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">Priority, highest first</span>
+        <ol class="priority">
+          <li>Sprite, high priority</li>
+          <li>Plane A, high priority</li>
+          <li>Plane B, high priority</li>
+          <li>Sprite, low priority</li>
+          <li>Plane A, low priority</li>
+          <li>Plane B, low priority</li>
+          <li>Backdrop colour</li>
+        </ol>
+        <p style="margin-top:.6rem">The first opaque pixel in this order wins.</p>
+      </div>
+    </aside>
+    <figure class="c-full figure layers reveal" aria-labelledby="layers-cap">
+      <fieldset class="controls">
+        <legend class="visually-hidden">Layers to show</legend>
+        <label><input type="checkbox" id="explode" checked> Exploded view</label>
+        <span class="sep" aria-hidden="true"></span>
+        <label><input type="checkbox" id="show-b" checked> Plane B</label>
+        <label><input type="checkbox" id="show-a" checked> Plane A</label>
+        <label><input type="checkbox" id="show-s" checked> Sprites</label>
+      </fieldset>
+      <div class="stage">
+        <div class="stack" role="img" aria-label="Right 2 Repair's frame as a stack of layers: backdrop, plane B with a peach sky, plane A with the red city and the rubble, and the sprites: two fighters, a sword slash and the scores.">
+          <div class="layer l-backdrop edge"><div class="backdrop"></div></div>
+          <div class="layer l-b edge"><img src="assets/img/r2r-plane-b.png" width="320" height="224" alt="" loading="lazy"></div>
+          <div class="layer l-a edge"><img src="assets/img/r2r-plane-a.png" width="320" height="224" alt="" loading="lazy"></div>
+          <div class="layer l-s edge"><img src="assets/img/r2r-sprites.png" width="320" height="224" alt="" loading="lazy"></div>
+        </div>
+      </div>
+      <ol class="stack-key" aria-hidden="true"><li><b>Sprites</b> fighters, slash, scores</li><li><b>Plane A</b> city, rubble</li><li><b>Plane B</b> sky</li><li><b>Backdrop</b> one colour</li></ol>
+      <figcaption id="layers-cap"><span class="fig-no">FIG. 3</span>The same frame as figure 0, one layer at a time. Untick <b>Exploded view</b> to collapse the stack into the picture the console shows; untick a layer to remove it. Made by <code>scripts/docs-shots</code>, which re-runs the VDP renderer on a copy of the console with the other layers hidden.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>Where the pixels come from</h3>
+      <p>All of it lives in the VDP’s 64 KiB of VRAM: the tiles, the two name tables, the window’s map, the sprite table and the horizontal scroll table, at addresses the game chooses through registers. Below are all 2,048 tile slots of VRAM at that frame, each in the palette the planes or sprites use it with, and the 64 colours of CRAM.</p>
+      <p>Look closely and the jigsaw shows: the skyline and the rubble cut into tiles, the dithered sky, the letters of the font, the fighters’ animation frames. The striped rows near the bottom are not pictures at all. They are the name tables and sprite table, read as if they were tiles, a reminder that VRAM is one shared memory and the registers decide what each part means.</p>
+    </div>
+    <aside class="c-side side figure">
+      <figure class="cram-fig"><img src="assets/img/r2r-cram.png" width="384" height="96" alt="The 64 CRAM colours as four rows of sixteen swatches: greys, reds and peaches, olive greens, cyans." loading="lazy" style="aspect-ratio:4/1"><figcaption>CRAM: four palettes of 16. Each colour is 9 bits, <code>BBB0GGG0RRR0</code>, converted through the console’s non-linear DAC.</figcaption></figure>
+    </aside>
+    <figure class="c-fig figure tiles-fig reveal">
+      <img src="assets/img/r2r-tiles.png" width="512" height="256" loading="lazy" alt="All 2,048 VRAM tiles in a 64 by 32 grid: pieces of the city and rubble, a sky gradient, a font, fighter sprites, and noise-like rows that are tables rather than graphics.">
+      <figcaption><span class="fig-no">FIG. 4</span>VRAM at frame 1,200, 64 tiles to a row. Transparent pixels are black.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>Line by line</h3>
+      <p>gase renders one scanline at a time, as the hardware does. For each line it draws plane B, then plane A or the window, into buffers of one byte per pixel (priority, palette, colour), evaluates which sprites cross the line (at most 20 per line and 320 sprite pixels in the 320-pixel mode; beyond that the hardware drops them), and composites the three buffers by priority. Register writes a game makes during horizontal blanking show up on the next line, which is what raster effects like water lines and per-line palette changes rely on.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 07 SOUND -->
+<section class="chapter" id="sound" data-title="07 Making sound" aria-labelledby="sound-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 07</span><span>crates/sound</span></div>
+    <p class="num" aria-hidden="true">07</p>
+    <h2 id="sound-h">Making sound</h2>
+    <p class="dek">The Mega Drive’s voice is frequency modulation: one sine wave bending the phase of another. The chip that does it has no multiplier.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">An <em>operator</em> is a sine oscillator with a volume envelope. On its own it makes a pure, dull tone. The trick, found by John Chowning in 1973 and licensed to Yamaha, is to add one operator’s output to another’s <em>phase</em>. The modulator bends the carrier back and forth and creates sidebands: when the two frequencies are in a simple ratio the sidebands are harmonics and the result is a rich, pitched timbre; odd ratios give bells and metal. The modulator’s volume, the <em>modulation index</em>, sets the brightness.</p>
+      <p>Try it. This is the formula, drawn live: <code>out = sin(ωc·t + I · sin(ωm·t))</code>.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">One chip, six voices</span><p>Six channels of four operators each. Register <code>B0</code> picks one of eight <em>algorithms</em>: which operators modulate which. Operator 1 can also modulate itself (feedback), turning its sine towards a sawtooth and then noise.</p></div>
+    </aside>
+    <figure class="c-fig figure fm plate reveal" aria-labelledby="fm-cap">
+      <div class="controls">
+        <label for="fm-ratio"><span>Modulator : carrier ratio <output id="fm-ratio-out">2</output></span><input type="range" id="fm-ratio" min="0.5" max="7" step="0.5" value="2"></label>
+        <label for="fm-index"><span>Modulation index <output id="fm-index-out">2.5</output></span><input type="range" id="fm-index" min="0" max="8" step="0.1" value="2.5"></label>
+        <label for="fm-cycles"><span>Carrier cycles shown <output id="fm-cycles-out">3</output></span><input type="range" id="fm-cycles" min="1" max="8" step="1" value="3"></label>
+      </div>
+      <svg viewBox="0 0 1000 360" role="img" aria-labelledby="fm-svg-t" data-fm>
+        <title id="fm-svg-t">Modulator, carrier and the frequency-modulated result</title>
+        <text class="lane" x="0" y="16">MODULATOR</text><line class="zero" x1="0" y1="60" x2="1000" y2="60"/><path class="trace-m" data-trace="m" d="M0 60H1000"/>
+        <text class="lane" x="0" y="126">CARRIER ALONE</text><line class="zero" x1="0" y1="170" x2="1000" y2="170"/><path class="trace-c" data-trace="c" d="M0 170H1000"/>
+        <text class="lane" x="0" y="236">FM RESULT</text><line class="zero" x1="0" y1="290" x2="1000" y2="290"/><path class="trace-o" data-trace="o" d="M0 290H1000"/>
+      </svg>
+      <figcaption id="fm-cap"><span class="fig-no">FIG. 5</span>Two operators, drawn with the textbook formula. Index 0 gives the plain carrier; raise it and the wave squeezes and stretches. The YM2612 does this with 10-bit phases, logarithmic sine tables and four operators per voice.</figcaption>
+    </figure>
+    <div class="c-full figure algos reveal" role="group" aria-label="The eight YM2612 algorithms; carriers, the operators you hear, are filled red">
+      <figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M24 35 L38 35"/><path class="ln" d="M58 35 L72 35"/><path class="ln" d="M92 35 L106 35"/><path class="ln" d="M126 35 H142"/><path class="ln" d="M8 27 C 8 17, 20 17, 20 27"/><circle class="op" cx="14" cy="35" r="10"/><text x="14" y="39">1</text><circle class="op" cx="48" cy="35" r="10"/><text x="48" y="39">2</text><circle class="op" cx="82" cy="35" r="10"/><text x="82" y="39">3</text><circle class="op car" cx="116" cy="35" r="10"/><text x="116" y="39">4</text></svg><figcaption>algorithm 0</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M30 18 L60 35"/><path class="ln" d="M30 52 L60 35"/><path class="ln" d="M80 35 L106 35"/><path class="ln" d="M126 35 H142"/><path class="ln" d="M14 10 C 14 0, 26 0, 26 10"/><circle class="op" cx="20" cy="18" r="10"/><text x="20" y="22">1</text><circle class="op" cx="20" cy="52" r="10"/><text x="20" y="56">2</text><circle class="op" cx="70" cy="35" r="10"/><text x="70" y="39">3</text><circle class="op car" cx="116" cy="35" r="10"/><text x="116" y="39">4</text></svg><figcaption>algorithm 1</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M50 14 L106 35"/><path class="ln" d="M30 52 L56 52"/><path class="ln" d="M76 52 L106 35"/><path class="ln" d="M126 35 H142"/><path class="ln" d="M34 6 C 34 -4, 46 -4, 46 6"/><circle class="op" cx="40" cy="14" r="10"/><text x="40" y="18">1</text><circle class="op" cx="20" cy="52" r="10"/><text x="20" y="56">2</text><circle class="op" cx="66" cy="52" r="10"/><text x="66" y="56">3</text><circle class="op car" cx="116" cy="35" r="10"/><text x="116" y="39">4</text></svg><figcaption>algorithm 2</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M30 18 L56 18"/><path class="ln" d="M76 18 L106 35"/><path class="ln" d="M76 52 L106 35"/><path class="ln" d="M126 35 H142"/><path class="ln" d="M14 10 C 14 0, 26 0, 26 10"/><circle class="op" cx="20" cy="18" r="10"/><text x="20" y="22">1</text><circle class="op" cx="66" cy="18" r="10"/><text x="66" y="22">2</text><circle class="op" cx="66" cy="52" r="10"/><text x="66" y="56">3</text><circle class="op car" cx="116" cy="35" r="10"/><text x="116" y="39">4</text></svg><figcaption>algorithm 3</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M40 18 L80 18"/><path class="ln" d="M40 52 L80 52"/><path class="ln" d="M100 18 H142"/><path class="ln" d="M100 52 H142"/><path class="ln" d="M24 10 C 24 0, 36 0, 36 10"/><circle class="op" cx="30" cy="18" r="10"/><text x="30" y="22">1</text><circle class="op car" cx="90" cy="18" r="10"/><text x="90" y="22">2</text><circle class="op" cx="30" cy="52" r="10"/><text x="30" y="56">3</text><circle class="op car" cx="90" cy="52" r="10"/><text x="90" y="56">4</text></svg><figcaption>algorithm 4</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M34 35 L80 10"/><path class="ln" d="M34 35 L80 35"/><path class="ln" d="M34 35 L80 60"/><path class="ln" d="M100 10 H142"/><path class="ln" d="M100 35 H142"/><path class="ln" d="M100 60 H142"/><path class="ln" d="M18 27 C 18 17, 30 17, 30 27"/><circle class="op" cx="24" cy="35" r="10"/><text x="24" y="39">1</text><circle class="op car" cx="90" cy="10" r="10"/><text x="90" y="14">2</text><circle class="op car" cx="90" cy="35" r="10"/><text x="90" y="39">3</text><circle class="op car" cx="90" cy="60" r="10"/><text x="90" y="64">4</text></svg><figcaption>algorithm 5</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M34 10 L80 10"/><path class="ln" d="M100 10 H142"/><path class="ln" d="M100 35 H142"/><path class="ln" d="M100 60 H142"/><path class="ln" d="M18 2 C 18 -8, 30 -8, 30 2"/><circle class="op" cx="24" cy="10" r="10"/><text x="24" y="14">1</text><circle class="op car" cx="90" cy="10" r="10"/><text x="90" y="14">2</text><circle class="op car" cx="90" cy="35" r="10"/><text x="90" y="39">3</text><circle class="op car" cx="90" cy="60" r="10"/><text x="90" y="64">4</text></svg><figcaption>algorithm 6</figcaption></figure>
+<figure><svg viewBox="0 0 150 70" aria-hidden="true"><path class="ln" d="M34 22 H142"/><path class="ln" d="M74 22 H142"/><path class="ln" d="M34 52 H142"/><path class="ln" d="M74 52 H142"/><path class="ln" d="M18 14 C 18 4, 30 4, 30 14"/><circle class="op car" cx="24" cy="22" r="10"/><text x="24" y="26">1</text><circle class="op car" cx="64" cy="22" r="10"/><text x="64" y="26">2</text><circle class="op car" cx="24" cy="52" r="10"/><text x="24" y="56">3</text><circle class="op car" cx="64" cy="52" r="10"/><text x="64" y="56">4</text></svg><figcaption>algorithm 7</figcaption></figure>
+    </div>
+    <div class="c-text prose figure">
+      <h3>Sine without multiplying</h3>
+      <p>The YM2612 has no multiplier. It stores <code>−log₂(sin)</code> for a quarter of a wave in a 256-entry table, <em>adds</em> the envelope’s attenuation (already in decibels, so already a logarithm), and turns the sum back into a linear value with a 256-entry table of powers of two and a shift. gase builds both tables from formulas, and its tests check them against values read off the chip’s die.</p>
+      <p>Then the analogue side. The YM2612 in early consoles has a flawed DAC that leaks a small level from silent channels, making quiet notes louder and grittier. This “ladder effect” is part of the Mega Drive sound, so gase emulates it by default. The SN76489-style PSG adds three square waves and a noise generator built from a 16-bit shift register. Finally a windowed-sinc resampler converts the chip’s native ≈ 53,267 samples a second to the 48,000 your sound card wants, nudging the ratio by up to half a percent to keep audio and video in step without dropping a frame.</p>
+    </div>
+    <aside class="c-side side figure">
+      <div class="note"><span class="label">Listen for yourself</span><p><code>gase --headless --wav out.wav game.bin</code> records exactly what the chips produce. The waveforms below were made that way.</p></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+      <div class="wave ink" style="-webkit-mask-image:url(assets/img/wave-overview.svg);mask-image:url(assets/img/wave-overview.svg)" role="img" aria-label="Five and a half seconds of Airstriker's title music, drawn as a waveform envelope."></div>
+      <div class="wave" style="-webkit-mask-image:url(assets/img/wave-zoom.svg);mask-image:url(assets/img/wave-zoom.svg);margin-top:1.4rem" role="img" aria-label="Twelve milliseconds of the same music, close enough to see individual FM waveforms."></div>
+      <figcaption><span class="fig-no">FIG. 6</span>Airstriker’s title music as gase computes it: 5.5 seconds (top), and 12 milliseconds of it (bottom), where the shapes of the FM voices are visible. Recorded with <code>--wav</code>, left and right mixed.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ 08 DETECTIVE -->
+<section class="chapter" id="odd-address" data-title="08 The odd address" aria-labelledby="odd-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 08</span><span>PR #10 · PR #12</span></div>
+    <p class="num" aria-hidden="true">08</p>
+    <h2 id="odd-h">The odd address</h2>
+    <p class="dek">A homebrew shooter crashed in gase and ran fine elsewhere. The emulator was right, and proving it took a trace, a register dump and a single bit.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Airstriker booted to its SEGA logo and then, a few seconds later, stopped on a black screen with a message from its own runtime: <em>68K Address Error</em>. It is a small freeware game written in BasiEgaXorz, a BASIC compiler for the Mega Drive, and it is known to work in popular emulators. So the first suspect was gase.</p>
+      <p>An address error is the 68000 refusing a word or long access at an odd address. The chip has no address line A0. A 16-bit access always covers two bytes at an even address, chosen with upper- and lower-byte strobes, so there is no way to ask for a word that starts on an odd byte. The CPU aborts the instruction mid-flight and takes exception 3, pushing a 14-byte frame that describes the faulting access. gase implements this exactly, because the MAME-derived test vectors check those frames bit for bit.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">The tools</span><p><code>--trace N</code> prints the first N instructions with their registers; <code>--break 254A</code> stops at the address-error handler, whose address sits in the vector table at <code>$00000C</code>.</p></div>
+    </aside>
+    <div class="c-full figure evidence reveal">
+      <figure><div class="crt"><img src="assets/img/airstriker-sega.png" width="320" height="224" loading="lazy" alt="The SEGA logo."></div><figcaption><span class="fig-no">A</span>Frame 60: the boot is fine.</figcaption></figure>
+      <figure><div class="crt"><img src="assets/img/airstriker-error.png" width="320" height="224" loading="lazy" alt="A black screen with the text 68K Address Error and START reset in yellow at the bottom."></div><figcaption><span class="fig-no">B</span>Frame 400: the game’s own error screen.</figcaption></figure>
+      <figure><div class="crt"><img src="assets/img/airstriker-title.png" width="320" height="224" loading="lazy" alt="The Airstriker title screen: a blue logo, 1P Hiscore 0, Press Start, Copyright 2008 Electrokinesis Studios."></div><figcaption><span class="fig-no">C</span>Frame 600 with <code>--no-address-errors</code>: the title.</figcaption></figure>
+    </div>
+    <div class="c-text prose figure">
+      <p>The trace shows the last instructions before the fault, at frame 358. The code wants to take the Z80’s bus, which means writing <code>$0100</code> to <code>$A11100</code>. It loads the address into <code>D0</code>, copies it to <code>A6</code>, loads the value, and then copies the pointer into <code>A0</code> for the write:</p>
+    </div>
+    <div class="c-wide figure reveal">
+<pre><code><span class="c">; gase --headless --frames 359 --trace 20000000 Airstriker.md   (registers before each instruction)</span>
+00F980  move.l #$A11100,d0           D0=00000000  A0=00FF026E
+00F986  movea.l d0,a6                D0=00A11100  A0=00FF026E   <span class="c">; A6 = $A11100, the Z80 bus request</span>
+00F988  move.l #$100,d0              D0=00A11100  A0=00FF026E
+<span class="hot">00F98E  movea.l <b>d6</b>,a0                D0=00000100  A0=00FF026E   ; copies D6, not A6</span>
+<span class="hot">00F990  move.w d0,(a0)               D0=00000100  A0=<b>2FFFFFFF</b>   ; a word write to an odd address</span>
+00254A  movea.l #$2674,a0            D0=00000100  A0=2FFFFFFF   <span class="g">; exception 3: the address-error handler</span></code></pre>
+    </div>
+    <div class="c-text prose figure">
+      <p><code>D6</code> held <code>$2FFFFFFF</code>, so the write went to an odd address and a real 68000 would fault exactly here. The instruction bytes in the ROM tell the rest. <code>MOVEA.L D6,A0</code> and <code>MOVEA.L A6,A0</code>, which the code presumably meant, are one bit apart:</p>
+    </div>
+    <div class="c-wide figure bits reveal" role="group" aria-label="Opcode comparison">
+      <div class="row"><span>$2046</span><span>0010 000 001 00<b>0</b> 110</span><span>movea.l d6,a0 · in the ROM</span></div>
+      <div class="row"><span>$204E</span><span>0010 000 001 00<b>1</b> 110</span><span>movea.l a6,a0 · what the code needed</span></div>
+    </div>
+    <div class="c-text prose figure">
+      <p>The source field of the instruction is a 3-bit mode and a 3-bit register. Mode 000 means a data register, 001 an address register; register 6 is the same in both. The compiler emitted the wrong mode. Emulators that do not model address errors quietly round the address down and carry on, and so the game “works” there.</p>
+      <p>The decision that followed is the project’s priorities in miniature. The default stays faithful to the hardware, because an emulator you learn from should not hide what a real 68000 does. But a small, documented, opt-in mode was added: with <code>--no-address-errors</code>, odd data accesses ignore bit 0, jumps to odd addresses still fault, and the setting is not saved in save states. The check sits in the already-rare odd-address branch, so it costs nothing otherwise. With it, Airstriker reaches its title screen and menu.</p>
+      <p>Even then, gase does not pretend the bug is harmless. The stray write lands at <code>$FFFFFE</code>, the top of RAM and the base of the stack, and corrupts the outermost return address. What happens after that depends on <em>how</em> an emulator mishandles the write, and the project chose not to chase another emulator’s memory layout bug for bug.</p>
+    </div>
+    <aside class="c-side side figure">
+      <div class="bignum"><b>1<small> bit</small></b><span>between the instruction the compiler emitted and the one the program needed.</span></div>
+    </aside>
+    <figure class="c-full figure debugger-fig reveal">
+      <div class="shot"><img src="assets/img/debugger-airstriker.png" width="1280" height="800" loading="lazy" alt="The gase debugger stopped at the address-error handler: 68000 registers with A0, A1, A2 and D5 to D7 all equal to 2FFFFFFF, the disassembly at 00254A, the decoded VDP registers, the palettes, the VRAM tiles and the sprite list."></div>
+      <figcaption><span class="fig-no">FIG. 7</span>The same moment in the debugger (<code>--break 254A --dump-debugger</code>): frame 358, line 106, stopped in the handler. Several registers hold the same <code>2FFFFFFF</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ 09 TIMING -->
+<section class="chapter" id="timing" data-title="09 Timing is everything" aria-labelledby="timing-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 09</span><span>crates/vdp/src/slots.rs · fifo.rs · dma.rs</span></div>
+    <p class="num" aria-hidden="true">09</p>
+    <h2 id="timing-h">Timing is everything</h2>
+    <p class="dek">The first VDP finished every write instantly. The real one makes the CPU wait for a gap in its own work, and games are written around that.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">While it draws a line, the VDP reads VRAM almost continuously: name table entries, tile patterns, scroll values, sprite data. VRAM has a single port, so each line is divided into a fixed sequence of memory slots, and most go to the renderer. Only a few <em>external access slots</em> are left for the 68000 and the DMA engine.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>9 <small>vs</small> 102</b><span>VRAM words the VDP can absorb per line, during active display and during blanking. A VRAM word needs two slots.</span></div>
+    </aside>
+    <figure class="c-full figure slots plate reveal">
+      <div class="scroll-x chart-scroll"><svg viewBox="0 -10 1200 300" role="img" aria-labelledby="slots-t slots-d">
+<title id="slots-t">External access slots in one H40 scanline</title>
+<desc id="slots-d">One scanline is 3,420 master clocks. While the VDP draws (top), 18 slots are left for the CPU and DMA; in vertical blanking or with the display off (bottom), 205.</desc>
+<rect class="band" x="14.0" y="40" width="915.8" height="70"/>
+<line class="base" x1="0" y1="110" x2="1200" y2="110"/>
+<line class="t-act" x1="36.5" y1="54" x2="36.5" y2="110"><title>slot at master clock 104</title></line>
+<line class="t-act" x1="81.4" y1="54" x2="81.4" y2="110"><title>slot at master clock 232</title></line>
+<line class="t-act" x1="126.3" y1="54" x2="126.3" y2="110"><title>slot at master clock 360</title></line>
+<line class="t-act" x1="216.1" y1="54" x2="216.1" y2="110"><title>slot at master clock 616</title></line>
+<line class="t-act" x1="261.1" y1="54" x2="261.1" y2="110"><title>slot at master clock 744</title></line>
+<line class="t-act" x1="306.0" y1="54" x2="306.0" y2="110"><title>slot at master clock 872</title></line>
+<line class="t-act" x1="395.8" y1="54" x2="395.8" y2="110"><title>slot at master clock 1128</title></line>
+<line class="t-act" x1="440.7" y1="54" x2="440.7" y2="110"><title>slot at master clock 1256</title></line>
+<line class="t-act" x1="485.6" y1="54" x2="485.6" y2="110"><title>slot at master clock 1384</title></line>
+<line class="t-act" x1="575.4" y1="54" x2="575.4" y2="110"><title>slot at master clock 1640</title></line>
+<line class="t-act" x1="620.4" y1="54" x2="620.4" y2="110"><title>slot at master clock 1768</title></line>
+<line class="t-act" x1="665.3" y1="54" x2="665.3" y2="110"><title>slot at master clock 1896</title></line>
+<line class="t-act" x1="755.1" y1="54" x2="755.1" y2="110"><title>slot at master clock 2152</title></line>
+<line class="t-act" x1="800.0" y1="54" x2="800.0" y2="110"><title>slot at master clock 2280</title></line>
+<line class="t-act" x1="844.9" y1="54" x2="844.9" y2="110"><title>slot at master clock 2408</title></line>
+<line class="t-act" x1="943.9" y1="54" x2="943.9" y2="110"><title>slot at master clock 2690</title></line>
+<line class="t-act" x1="1035.1" y1="54" x2="1035.1" y2="110"><title>slot at master clock 2950</title></line>
+<line class="t-act" x1="1126.3" y1="54" x2="1126.3" y2="110"><title>slot at master clock 3210</title></line>
+<text class="big" x="0" y="26">Drawing a line: 18 slots</text>
+<text x="20.0" y="132">active display: the VDP fetches tiles, names, sprites</text>
+<text x="947.4" y="132">horizontal blank</text>
+<line class="base" x1="0" y1="260" x2="1200" y2="260"/>
+<path class="t-blank" d="M0.0 204v56M5.6 204v56M11.6 204v56M17.5 204v56M23.2 204v56M29.1 204v56M35.1 204v56M40.7 204v56M46.7 204v56M52.6 204v56M58.2 204v56M64.2 204v56M70.2 204v56M75.8 204v56M81.8 204v56M87.7 204v56M93.3 204v56M99.3 204v56M105.3 204v56M110.9 204v56M116.8 204v56M122.8 204v56M128.8 204v56M134.4 204v56M140.4 204v56M146.3 204v56M151.9 204v56M157.9 204v56M163.9 204v56M169.5 204v56M175.4 204v56M181.4 204v56M187.0 204v56M193.0 204v56M198.9 204v56M204.6 204v56M210.5 204v56M216.5 204v56M222.1 204v56M228.1 204v56M234.0 204v56M240.0 204v56M245.6 204v56M251.6 204v56M257.5 204v56M263.2 204v56M269.1 204v56M275.1 204v56M280.7 204v56M286.7 204v56M292.6 204v56M298.2 204v56M304.2 204v56M310.2 204v56M315.8 204v56M321.8 204v56M327.7 204v56M333.3 204v56M339.3 204v56M345.3 204v56M350.9 204v56M356.8 204v56M362.8 204v56M368.8 204v56M374.4 204v56M380.4 204v56M386.3 204v56M391.9 204v56M397.9 204v56M403.9 204v56M409.5 204v56M415.4 204v56M421.4 204v56M427.0 204v56M433.0 204v56M438.9 204v56M444.6 204v56M450.5 204v56M456.5 204v56M462.1 204v56M468.1 204v56M474.0 204v56M480.0 204v56M485.6 204v56M491.6 204v56M497.5 204v56M503.2 204v56M509.1 204v56M515.1 204v56M520.7 204v56M526.7 204v56M532.6 204v56M538.2 204v56M544.2 204v56M550.2 204v56M555.8 204v56M561.8 204v56M567.7 204v56M573.3 204v56M579.3 204v56M585.3 204v56M590.9 204v56M596.8 204v56M602.8 204v56M608.8 204v56M614.4 204v56M620.4 204v56M626.3 204v56M631.9 204v56M637.9 204v56M643.9 204v56M649.5 204v56M655.4 204v56M661.4 204v56M667.0 204v56M673.0 204v56M678.9 204v56M684.6 204v56M690.5 204v56M696.5 204v56M702.1 204v56M708.1 204v56M714.0 204v56M720.0 204v56M725.6 204v56M731.6 204v56M737.5 204v56M743.2 204v56M749.1 204v56M755.1 204v56M760.7 204v56M766.7 204v56M772.6 204v56M778.2 204v56M784.2 204v56M790.2 204v56M795.8 204v56M801.8 204v56M807.7 204v56M813.3 204v56M819.3 204v56M825.3 204v56M830.9 204v56M836.8 204v56M842.8 204v56M848.8 204v56M854.4 204v56M860.4 204v56M866.3 204v56M871.9 204v56M877.9 204v56M883.9 204v56M889.5 204v56M895.4 204v56M901.4 204v56M907.0 204v56M913.0 204v56M918.9 204v56M924.6 204v56M930.5 204v56M936.5 204v56M942.1 204v56M948.1 204v56M954.0 204v56M960.0 204v56M965.6 204v56M971.6 204v56M977.5 204v56M983.2 204v56M989.1 204v56M995.1 204v56M1000.7 204v56M1006.7 204v56M1012.6 204v56M1018.2 204v56M1024.2 204v56M1030.2 204v56M1035.8 204v56M1041.8 204v56M1047.7 204v56M1053.3 204v56M1059.3 204v56M1065.3 204v56M1070.9 204v56M1076.8 204v56M1082.8 204v56M1088.8 204v56M1094.4 204v56M1100.4 204v56M1106.3 204v56M1111.9 204v56M1117.9 204v56M1123.9 204v56M1129.5 204v56M1135.4 204v56M1141.4 204v56M1147.0 204v56M1153.0 204v56M1158.9 204v56M1164.6 204v56M1170.5 204v56M1176.5 204v56M1182.1 204v56M1188.1 204v56M1194.0 204v56"/>
+<text class="big" x="0" y="176">Blanking, or display off: 205 slots</text>
+<text x="0" y="282">0</text><text x="1200" y="282" text-anchor="end">3,420 master clocks</text>
+</svg></div>
+      <figcaption><span class="fig-no">FIG. 8</span>One H40 scanline, 3,420 master clocks, drawn to scale from the tables in <code>slots.rs</code>. Red: the 18 external slots while the VDP draws, one every 16 pixels with every fourth taken by DRAM refresh, plus three in horizontal blanking. Below: the 205 slots of a line in vertical blanking, or with the display switched off.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <p>Writes to the data port wait in a <strong>four-entry FIFO</strong> until a slot comes. Four entries absorb a short burst, a few palette entries during horizontal blanking, without the CPU noticing. A fifth write stalls the 68000 until an entry frees up, which in active display can take a few hundred master clocks per word. Status bits 8 and 9 report the FIFO full and empty, and careful programs poll them.</p>
+      <p><strong>DMA</strong> comes in three kinds. A 68000-to-VDP transfer pushes words through the same FIFO and freezes the 68000 until the last one is in. Fills and copies run in the background while status bit 1 says “busy”; a copy needs a read and a write slot per byte, so it runs at half the speed of a fill. This is why games upload graphics during vertical blanking or with the display off: the same transfer is about eleven times faster there.</p>
+      <p>gase models all of this with a lazy clock. The VDP remembers how far into the line it has used its slots, and is brought up to date before every port access and at the end of every line. When nothing is queued, catching up just moves a counter.</p>
+    </div>
+    <aside class="c-side side figure">
+      <div class="note"><span class="label">Measured, not assumed</span><p>Hand-assembled 68000 programs in <code>crates/core/tests/vdp_timing.rs</code> time the hardware the way a game would, with the HV counter. Every measured value matched the prediction.</p></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Test program</th><th scope="col" class="r">Active display</th><th scope="col" class="r">Display off</th></tr></thead>
+        <tbody>
+          <tr><td>Polls of FIFO-empty after 4 VRAM writes</td><td class="r">5 polls</td><td class="r">1 poll</td></tr>
+          <tr><td>A 24-word burst, timed with the HV counter</td><td class="r">2 lines</td><td class="r">0 lines</td></tr>
+          <tr><td>A 180-word 68000 DMA (data and registers checked)</td><td class="r">19 lines</td><td class="r">2 lines</td></tr>
+          <tr><td>Polls of DMA-busy: 4 KiB fill vs copy</td><td class="r">—</td><td class="r">306 vs 611</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </figure>
+    <p class="c-wide pull reveal">The emulator became more accurate, and SGDK games started twelve frames later.</p>
+    <div class="c-text prose">
+      <p>SGDK, the C toolkit most homebrew is built with, clears all 64 KiB of VRAM at start-up with a DMA fill, twice, with the display on. At real slot speed each fill takes about five and a half frames, so with this model SGDK software finishes booting about twelve frames later, as it does on a console. Two regression hashes had to be revisited. The Spiral showed the same particle scene at a slightly later point of its animation, and its new hash was recorded after comparing screenshots. The 240p Test Suite’s pattern menu now finished loading after the scripted button press, so the press moved from frames 330–335 to 345–350; the resulting frame was bit-identical to the old one.</p>
+      <p>A regression test that changes is not a failure if you can explain the change. These two could be explained to the frame.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 10 SAVES -->
+<section class="chapter" id="saves" data-title="10 Saves, states and rewind" aria-labelledby="saves-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 10</span><span>crates/savestate · core/src/eeprom.rs · rewind.rs</span></div>
+    <p class="num" aria-hidden="true">10</p>
+    <h2 id="saves-h">Saves, states and rewind</h2>
+    <p class="dek">Three ways to keep a game’s progress: the cartridge’s own memory, a snapshot of the whole console, and a ring of snapshots you can walk back through.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">A <strong>save state</strong> is the whole console written down: every component implements one trait, writing its fields in a fixed order and reading them back. The format is plain little-endian binary with a magic number, a version and a fingerprint of the game, with no field names and no schema. Loading is transactional: a damaged state leaves the running console untouched.</p>
+      <p><strong>Rewind</strong> then costs almost nothing to build: a ring buffer of save states, one taken every few frames, popped and loaded while you hold the key. A state is roughly 150 KiB, so ten seconds of history fit in a few tens of megabytes. During the performance work, saving byte slices in one copy instead of byte by byte made those snapshots about six times cheaper.</p>
+      <h3>The chip with two wires</h3>
+      <p>Most cartridges save to battery-backed SRAM, ordinary memory at <code>$200000</code>. A few dozen use a <strong>serial EEPROM</strong> instead: a tiny I²C chip with only a clock and a data pin, which the game drives bit by bit by writing to a latch at an address that depends on who made the board. gase emulates the chip edge by edge (start and stop conditions, the acknowledge bit on every ninth clock, both addressing modes, page writes that wrap within the page) and keeps a table of which games use which chip and wiring, because nothing in the ROM says so.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">Board families</span><p>Sega, Acclaim (two kinds), Electronic Arts and Codemasters each wired the clock and data lines to different addresses and bits. Games include Wonder Boy in Monster World, NBA Jam, the ’93 NHLPA and Madden games and Micro Machines 2.</p></div>
+      <div class="note"><span class="label">An honest caveat</span><p>The board table could not be checked against real game dumps: only freely licensed ROMs were available while building it, and none of them use an EEPROM. The pull request says so.</p></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============================================================ 11 DEBUGGER -->
+<section class="chapter" id="debugger" data-title="11 A debugger for learners" aria-labelledby="debugger-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 11</span><span>crates/gase/src/debugger · core/src/system/debug.rs</span></div>
+    <p class="num" aria-hidden="true">11</p>
+    <h2 id="debugger-h">A debugger for learners</h2>
+    <p class="dek">Reading about a machine is one thing. Stopping it in the middle of a frame and looking inside is another.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Press F1 in gase and a second window opens with the console as its chips see it: both CPUs’ registers and disassembly, the VDP’s registers decoded by name, the palettes, every tile in VRAM or the plane maps, and the sprite list in link order. You can pause, step one 68000 instruction, run to the end of the frame or to the next vertical blank, set breakpoints, and mute each FM and PSG channel to hear how the music is arranged.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">Same bits, either way</span><p>Frames run normally and frames single-stepped through the debugger give bit-identical save states and pictures; tests check it. With no breakpoints set, the normal frame loop never looks at the debugger, so it costs nothing.</p></div>
+    </aside>
+    <figure class="c-full figure debugger-fig reveal">
+      <div class="shot">
+        <img src="assets/img/debugger-240p.png" width="1280" height="800" loading="lazy" alt="The gase debugger on the 240p Test Suite at frame 300: 68000 registers and disassembly at the top left, the Z80 below, the decoded VDP registers at the top right, the four palettes, the VRAM tiles, and the sprite list.">
+        <span class="pin" style="left:1.2%;top:3.5%" aria-hidden="true">A</span>
+        <span class="pin" style="left:1.2%;top:12%" aria-hidden="true">B</span>
+        <span class="pin" style="left:1.2%;top:43%" aria-hidden="true">C</span>
+        <span class="pin" style="left:1.2%;top:59.5%" aria-hidden="true">D</span>
+        <span class="pin" style="left:42.6%;top:1.3%" aria-hidden="true">E</span>
+        <span class="pin" style="left:42.6%;top:15%" aria-hidden="true">F</span>
+        <span class="pin" style="left:42.6%;top:26.5%" aria-hidden="true">G</span>
+        <span class="pin" style="left:42.6%;top:61%" aria-hidden="true">H</span>
+      </div>
+      <figcaption><span class="fig-no">FIG. 9</span>The debugger on the 240p Test Suite at frame 300, saved by the headless runner with <code>--dump-debugger</code>. It is drawn into a plain pixel buffer with a public-domain 8 × 8 font, which is why it can be saved without a window and unit-tested.</figcaption>
+      <ol class="callouts">
+        <li><span><b>68000 registers</b>, with the status register’s flags decoded.</span></li>
+        <li><span><b>Disassembly</b> around the program counter, breakpoints and a cursor.</span></li>
+        <li><span><b>Z80</b> registers and code, and who holds its bus.</span></li>
+        <li><span><b>Sound</b>: which FM and PSG channels are muted.</span></li>
+        <li><span><b>VDP registers</b> by name: plane addresses, sizes, scroll modes, DMA.</span></li>
+        <li><span><b>CRAM</b>: the four 16-colour palettes.</span></li>
+        <li><span><b>VRAM</b>: all 2,048 tiles, or plane A, plane B, the window.</span></li>
+        <li><span><b>Sprites</b> in link order: position, size, tile, palette, flips.</span></li>
+      </ol>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>Experiments to try</h3>
+      <ul>
+        <li><strong>Follow the boot.</strong> Start with <code>gase --debug game.bin</code> and press <kbd>S</kbd>: most games first read the version register at <code>A10001</code>, then set up the VDP (watch the decoded registers change), then clear RAM.</li>
+        <li><strong>Find the vertical-blank handler.</strong> Press <kbd>V</kbd>, then <kbd>S</kbd>: the 68000 takes the level-6 interrupt and jumps to the address stored at <code>$000078</code>. Most games do all their VRAM updates there.</li>
+        <li><strong>Read a frame apart.</strong> Press <kbd>T</kbd> to switch between the tiles, plane A, plane B and the window, and compare with the sprite list.</li>
+        <li><strong>Hear the channels.</strong> Mute FM channels with <kbd>1</kbd>–<kbd>6</kbd> and the PSG with <kbd>7</kbd>–<kbd>0</kbd>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 12 PERFORMANCE -->
+<section class="chapter" id="performance" data-title="12 Fast, and still readable" aria-labelledby="perf-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 12</span><span>benchmarks/ · PR #17</span></div>
+    <p class="num" aria-hidden="true">12</p>
+    <h2 id="perf-h">Fast, and still readable</h2>
+    <p class="dek">One profiling-driven pass made gase 1.5 to 1.9 times faster without changing a single output bit, and without making the code harder to learn from.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">The work started with measurement, not hunches. Two numbers were taken for each of the five test ROMs: frames per second from the headless benchmark, which is what you feel, and the count of host instructions executed over 300 frames under callgrind, which does not depend on what else the machine is doing and shows changes of a fraction of a percent.</p>
+      <p>The profile was unambiguous. The scanline renderer took 50–57% of all instructions: it recomputed the scroll, the cell and the pixel for every one of the 320 pixels of each plane, and composited them with branchy loops. Next came the 68000’s operand helpers, called out of line, then the YM2612 computing silent channels, the PSG ticking one step at a time, and the resampler.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>2.06–2.48×</b><span>fewer host instructions per frame. Wall-clock gains are smaller because what is left is denser work: interpreter dispatch and code the compiler vectorised.</span></div>
+    </aside>
+    <figure class="c-fig figure chart plate reveal">
+      <div class="legend" aria-hidden="true"><span><i class="before"></i>Before (commit acc9631)</span><span><i class="after"></i>After (feature/performance)</span></div>
+      <div class="scroll-x chart-scroll"><svg viewBox="0 0 1000 380" role="img" aria-labelledby="bench-t bench-d">
+<title id="bench-t">Frames per second before and after the performance work</title>
+<desc id="bench-d">Median of 7 interleaved rounds of 3,000 frames, headless, one core of a shared 2.1 GHz Xeon.</desc>
+<line class="grid-line" x1="230.0" y1="30" x2="230.0" y2="350"/>
+<text class="tick" x="230.0" y="18" text-anchor="middle">0</text>
+<line class="grid-line" x1="387.5" y1="30" x2="387.5" y2="350"/>
+<text class="tick" x="387.5" y="18" text-anchor="middle">500</text>
+<line class="grid-line" x1="545.0" y1="30" x2="545.0" y2="350"/>
+<text class="tick" x="545.0" y="18" text-anchor="middle">1,000</text>
+<line class="grid-line" x1="702.5" y1="30" x2="702.5" y2="350"/>
+<text class="tick" x="702.5" y="18" text-anchor="middle">1,500</text>
+<line class="grid-line" x1="860.0" y1="30" x2="860.0" y2="350"/>
+<text class="tick" x="860.0" y="18" text-anchor="middle">2,000</text>
+<text class="tick" x="1000" y="18" text-anchor="end">speed-up</text>
+<g class="row"><title>240p Test Suite: 812 fps before, 1505 fps after</title>
+<text class="lab" x="0" y="71">240p Test Suite</text>
+<line class="stem" x1="485.8" y1="66" x2="704.0" y2="66"/>
+<circle class="dot-before" cx="485.8" cy="66" r="7"/>
+<circle class="dot-after" cx="704.0" cy="66" r="8"/>
+<text class="val-2" x="471.8" y="71" text-anchor="end">812</text>
+<text class="val" x="718.0" y="71">1505</text>
+<text class="val em" x="1000" y="71" text-anchor="end">1.85×</text></g>
+<g class="row"><title>genmd test pattern: 941 fps before, 1780 fps after</title>
+<text class="lab" x="0" y="133">genmd test pattern</text>
+<line class="stem" x1="526.5" y1="128" x2="790.5" y2="128"/>
+<circle class="dot-before" cx="526.5" cy="128" r="7"/>
+<circle class="dot-after" cx="790.5" cy="128" r="8"/>
+<text class="val-2" x="512.5" y="133" text-anchor="end">941</text>
+<text class="val" x="804.5" y="133">1780</text>
+<text class="val em" x="1000" y="133" text-anchor="end">1.89×</text></g>
+<g class="row"><title>Airstriker: 864 fps before, 1602 fps after</title>
+<text class="lab" x="0" y="195">Airstriker</text>
+<line class="stem" x1="502.3" y1="190" x2="734.7" y2="190"/>
+<circle class="dot-before" cx="502.3" cy="190" r="7"/>
+<circle class="dot-after" cx="734.7" cy="190" r="8"/>
+<text class="val-2" x="488.3" y="195" text-anchor="end">864</text>
+<text class="val" x="748.7" y="195">1602</text>
+<text class="val em" x="1000" y="195" text-anchor="end">1.85×</text></g>
+<g class="row"><title>Right 2 Repair: 728 fps before, 1337 fps after</title>
+<text class="lab" x="0" y="257">Right 2 Repair</text>
+<line class="stem" x1="459.4" y1="252" x2="651.2" y2="252"/>
+<circle class="dot-before" cx="459.4" cy="252" r="7"/>
+<circle class="dot-after" cx="651.2" cy="252" r="8"/>
+<text class="val-2" x="445.4" y="257" text-anchor="end">728</text>
+<text class="val" x="665.2" y="257">1337</text>
+<text class="val em" x="1000" y="257" text-anchor="end">1.84×</text></g>
+<g class="row"><title>The Spiral: 658 fps before, 994 fps after</title>
+<text class="lab" x="0" y="319">The Spiral</text>
+<line class="stem" x1="437.2" y1="314" x2="543.1" y2="314"/>
+<circle class="dot-before" cx="437.2" cy="314" r="7"/>
+<circle class="dot-after" cx="543.1" cy="314" r="8"/>
+<text class="val-2" x="423.2" y="319" text-anchor="end">658</text>
+<text class="val" x="557.1" y="319">994</text>
+<text class="val em" x="1000" y="319" text-anchor="end">1.51×</text></g>
+</svg></div>
+      <figcaption><span class="fig-no">FIG. 10</span>Frames per second, headless, median of 7 interleaved rounds of 3,000 frames on one core of a shared 2.1 GHz Xeon. At 1,500 frames per second gase runs about 25 times faster than a console. Data: <code>benchmarks/results/2026-10-10.csv</code>.</figcaption>
+    </figure>
+    <figure class="c-fig figure chart reveal">
+      <div class="scroll-x chart-scroll"><svg viewBox="0 0 1000 414" role="img" aria-labelledby="wf-t">
+<title id="wf-t">Host instructions to emulate 300 frames of Airstriker, after each commit (billions)</title>
+<line class="grid-line" x1="380.0" y1="24" x2="380.0" y2="404"/>
+<text class="tick" x="380.0" y="14" text-anchor="middle">0 G</text>
+<line class="grid-line" x1="474.5" y1="24" x2="474.5" y2="404"/>
+<text class="tick" x="474.5" y="14" text-anchor="middle">1 G</text>
+<line class="grid-line" x1="569.1" y1="24" x2="569.1" y2="404"/>
+<text class="tick" x="569.1" y="14" text-anchor="middle">2 G</text>
+<line class="grid-line" x1="663.6" y1="24" x2="663.6" y2="404"/>
+<text class="tick" x="663.6" y="14" text-anchor="middle">3 G</text>
+<line class="grid-line" x1="758.2" y1="24" x2="758.2" y2="404"/>
+<text class="tick" x="758.2" y="14" text-anchor="middle">4 G</text>
+<line class="grid-line" x1="852.7" y1="24" x2="852.7" y2="404"/>
+<text class="tick" x="852.7" y="14" text-anchor="middle">5 G</text>
+<g class="row"><title>baseline (acc9631): 5.206 billion instructions</title>
+<text class="lab-2" x="364" y="48" text-anchor="end">baseline (acc9631)</text>
+<rect class="m-ink" x="380" y="36" width="492.2" height="18"/>
+<text class="val" x="882.2" y="50">5.206</text></g>
+<g class="row"><title>vdp: render planes a tile row at a time: 3.352 billion instructions</title>
+<text class="lab-2" x="364" y="82" text-anchor="end">vdp: render planes a tile row at a time</text>
+<rect class="m-ink" x="380" y="70" width="316.9" height="18"/>
+<text class="val" x="706.9" y="84">3.352</text></g>
+<g class="row"><title>m68k: always inline the EA helpers: 3.070 billion instructions</title>
+<text class="lab-2" x="364" y="116" text-anchor="end">m68k: always inline the EA helpers</text>
+<rect class="m-ink" x="380" y="104" width="290.3" height="18"/>
+<text class="val" x="680.3" y="118">3.070</text></g>
+<g class="row"><title>core: one-compare ROM fast path: 2.961 billion instructions</title>
+<text class="lab-2" x="364" y="150" text-anchor="end">core: one-compare ROM fast path</text>
+<rect class="m-ink" x="380" y="138" width="279.9" height="18"/>
+<text class="val" x="669.9" y="152">2.961</text></g>
+<g class="row"><title>ym2612: skip faded-out operators: 2.786 billion instructions</title>
+<text class="lab-2" x="364" y="184" text-anchor="end">ym2612: skip faded-out operators</text>
+<rect class="m-ink" x="380" y="172" width="263.4" height="18"/>
+<text class="val" x="653.4" y="186">2.786</text></g>
+<g class="row"><title>psg: reload to reload: 2.726 billion instructions</title>
+<text class="lab-2" x="364" y="218" text-anchor="end">psg: reload to reload</text>
+<rect class="m-ink" x="380" y="206" width="257.7" height="18"/>
+<text class="val" x="647.7" y="220">2.726</text></g>
+<g class="row"><title>core: inline Z80 sound RAM: 2.726 billion instructions</title>
+<text class="lab-2" x="364" y="252" text-anchor="end">core: inline Z80 sound RAM</text>
+<rect class="m-ink" x="380" y="240" width="257.7" height="18"/>
+<text class="val" x="647.7" y="254">2.726</text></g>
+<g class="row"><title>vdp: priorities as byte arithmetic (SIMD): 2.487 billion instructions</title>
+<text class="lab-2" x="364" y="286" text-anchor="end">vdp: priorities as byte arithmetic (SIMD)</text>
+<rect class="m-ink" x="380" y="274" width="235.1" height="18"/>
+<text class="val" x="625.1" y="288">2.487</text></g>
+<g class="row"><title>vdp: name table row once per column: 2.276 billion instructions</title>
+<text class="lab-2" x="364" y="320" text-anchor="end">vdp: name table row once per column</text>
+<rect class="m-ink" x="380" y="308" width="215.2" height="18"/>
+<text class="val" x="605.2" y="322">2.276</text></g>
+<g class="row"><title>m68k: fixed-size decode table: 2.265 billion instructions</title>
+<text class="lab-2" x="364" y="354" text-anchor="end">m68k: fixed-size decode table</text>
+<rect class="m-ink" x="380" y="342" width="214.1" height="18"/>
+<text class="val" x="604.1" y="356">2.265</text></g>
+<g class="row"><title>psg: ultrasonic channels in one step: 2.241 billion instructions</title>
+<text class="lab-2" x="364" y="388" text-anchor="end">psg: ultrasonic channels in one step</text>
+<rect class="m-red" x="380" y="376" width="211.9" height="18"/>
+<text class="val" x="601.9" y="390">2.241</text></g>
+</svg></div>
+      <figcaption><span class="fig-no">FIG. 11</span>Host instructions to emulate 300 frames of Airstriker, after each commit of the pass, in order. The first step, drawing planes a tile row at a time instead of a pixel at a time, removed more than a third of all the work.</figcaption>
+    </figure>
+    <p class="c-wide pull reveal">Read the reference to learn how the hardware works. Read the fast path to learn how to make it quick.</p>
+    <div class="c-text prose">
+      <p>That was the rule for every optimisation. The straightforward version stays in the code as the documented definition, the fast path names it in its own documentation, and a unit test proves the two agree, usually on thousands of random inputs. On top of that, every change had to leave the test-ROM frame hashes, the recorded audio and the CPU test vectors bit-identical. No <code>unsafe</code>, and no hand-written SIMD: the compiler does the vectorising.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">Tried, and dropped</span><p>A shift instead of a division for the tile height (no measurable change). A fast path for work RAM like the ROM one (Airstriker got 0.8% slower). Computing both resampler channels in one loop (no change). The measurements are in <code>benchmarks/results/</code>.</p></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Fast path</th><th scope="col">Readable reference</th><th scope="col">Proved equal by</th></tr></thead>
+        <tbody>
+          <tr><td><code>render_plane</code>, tile-row runs</td><td><code>plane_pixel_reference</code>, the per-pixel formula</td><td>300 random VRAM, VSRAM and register setups: every scroll mode, plane size, H32/H40, interlace</td></tr>
+          <tr><td><code>pick_fast</code>, byte arithmetic (SIMD)</td><td><code>pick</code>, the priority rules</td><td>Every plane B pixel value</td></tr>
+          <tr><td><code>Psg::run</code>, reload to reload</td><td><code>Psg::tick</code> + <code>Psg::output</code></td><td>3,000 random register writes, batches starting mid-period</td></tr>
+          <tr><td>Skipping faded-out operators</td><td><code>Operator::eg_step</code>, <code>Channel::calc_operators</code></td><td>200 operators × 4,095 counter values; 2,000 random channels</td></tr>
+          <tr><td>One-compare ROM read</td><td><code>Cartridge::read_word_mapped</code></td><td>Odd-size ROMs, mapper, EEPROM, SRAM inside and outside ROM</td></tr>
+          <tr><td>Byte slices in one copy</td><td><code>State::save_slice</code>’s default</td><td>Byte-identical save states</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ 13 PRACTICE -->
+<section class="chapter" id="practice" data-title="13 How the work was done" aria-labelledby="practice-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 13</span><span>.github/workflows</span></div>
+    <p class="num" aria-hidden="true">13</p>
+    <h2 id="practice-h">How the work was done</h2>
+    <p class="dek">Every change arrived as a pull request that carried its own tests, a local CI run, and a plain account of what it did not do.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Work happens on <code>feature/…</code> and <code>fix/…</code> branches cut from <code>develop</code> and merged back through pull requests; <code>main</code> follows releases. Chips were developed in parallel on their own branches, which the one-crate-per-chip layout made painless, and each pull request description lists what was tested, what is approximate, and which other open pull requests it will conflict with and in what order to merge them.</p>
+      <p>Continuous integration runs on every pull request, with warnings treated as errors:</p>
+      <ol class="steps">
+        <li><span><code>cargo fmt --all --check</code></span></li>
+        <li><span><code>cargo clippy --workspace --all-targets</code>, with the workspace lints, <code>forbid(unsafe_code)</code> among them</span></li>
+        <li><span><code>cargo test --workspace</code>: unit tests, hand-assembled whole-system programs, debugger equivalence</span></li>
+        <li><span><code>cargo build -p gase --no-default-features</code>, proving the headless build has no external dependencies</span></li>
+        <li><span><code>cargo doc --workspace --no-deps</code> with warnings as errors: the documentation is part of the product</span></li>
+      </ol>
+      <p>The big suites are too large for every push (the Z80 vectors alone are about 1.3 GB), so a second workflow runs them weekly and on demand, together with the test-ROM regression: each ROM run for a fixed number of frames with scripted presses, and an FNV-1a hash of the picture compared with a value that was only recorded after looking at the frame.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>200</b><span>tests in <code>cargo test --workspace</code> at the end of the performance pull request, before the big suites.</span></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+      <div class="table-wrap">
+      <table class="ledger">
+        <thead><tr><th scope="col">PR</th><th scope="col">What it brought</th><th scope="col" class="branch">Branch</th><th scope="col" class="r">Merged (UTC)</th></tr></thead>
+        <tbody>
+          <tr><td>#1</td><td>Workspace, save-state crate, the viability study</td><td class="branch">claude/vibrant-fermat-a8mz9q</td><td class="when r">9 Oct 21:44</td></tr>
+          <tr><td>#2 #5</td><td>The VDP: ports, DMA, timing, scanline renderer</td><td class="branch">feature/vdp</td><td class="when r">9 Oct 22:02</td></tr>
+          <tr><td>#3 #4</td><td>The Z80, passing SingleStepTests and ZEXALL</td><td class="branch">feature/z80-cpu</td><td class="when r">9 Oct 22:02</td></tr>
+          <tr><td>#8</td><td>Sound: YM2612, PSG, resampler, filters</td><td class="branch">feature/sound</td><td class="when r">9 Oct 22:06</td></tr>
+          <tr><td>#9</td><td>CI on every pull request, weekly vector runs</td><td class="branch">feature/ci</td><td class="when r">9 Oct 22:09</td></tr>
+          <tr><td>#10</td><td>The 68000, validated against MAME and Tom Harte vectors</td><td class="branch">feature/m68k-cpu</td><td class="when r">9 Oct 22:44</td></tr>
+          <tr><td>#11</td><td>The console and the frontend: gase is playable</td><td class="branch">feature/core-system</td><td class="when r">9 Oct 22:44</td></tr>
+          <tr><td>#12</td><td>Opt-in lenient address errors</td><td class="branch">feature/lenient-address-errors</td><td class="when r">9 Oct 23:44</td></tr>
+          <tr><td>#13</td><td>Serial EEPROM saves</td><td class="branch">feature/eeprom-saves</td><td class="when r">10 Oct 06:59</td></tr>
+          <tr><td>#14</td><td>VDP FIFO, access slots, time-accurate DMA</td><td class="branch">feature/vdp-fifo-dma-timing</td><td class="when r">10 Oct 07:02</td></tr>
+          <tr><td>#15</td><td>The learner debugger</td><td class="branch">feature/debugger</td><td class="when r">10 Oct 07:03</td></tr>
+          <tr><td>#16</td><td>Fix: let the FIFO drain in a colour test</td><td class="branch">fix/cram-rgb-test-fifo</td><td class="when r">10 Oct 07:26</td></tr>
+          <tr><td>#17</td><td>Performance pass and <code>benchmarks/</code></td><td class="branch">feature/performance</td><td class="when r">10 Oct 08:36</td></tr>
+        </tbody>
+        <caption>Merged pull requests, in order. #6 and #7 synchronised <code>main</code> and <code>develop</code> while the branch model settled. #16 exists because two correct branches, merged together, broke a test that assumed CRAM writes land instantly.</caption>
+      </table>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ 14 NEXT -->
+<section class="chapter" id="next" data-title="14 What’s next" aria-labelledby="next-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 14</span><span class="upcoming-mark">In progress</span></div>
+    <p class="num" aria-hidden="true">14</p>
+    <h2 id="next-h">What’s next</h2>
+    <p class="dek">The core has no idea what a window is. That was deliberate, and it is about to pay off.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-wide">
+      <ul class="next-list">
+        <li><div><p class="upcoming-mark">Upcoming</p><h3>A GUI for desktop, web and mobile</h3></div><p>Today gase is a command-line program with an SDL2 window. A graphical interface is being built on separate branches, on top of the same I/O-free core, aiming at the desktop, the browser and phones. This chapter will show it when it lands.</p></li>
+        <li><div><p class="upcoming-mark">Upcoming</p><h3>Loading games from ZIP files</h3></div><p>Most ROM collections are zipped. Reading them directly, without unpacking first, is in progress too, in keeping with the rule of few dependencies.</p></li>
+        <li><div><p class="upcoming-mark">Known gaps</p><h3>What gase does not do yet</h3></div><p>Master System mode, the Mega CD and the 32X are not supported. Mid-line raster changes take effect on the next line. VDP slot <em>positions</em> follow the documented structure rather than measured positions, though the counts are exact.</p></li>
+      </ul>
+      <div class="next-slot figure" data-slot="gui-screenshots">Screenshots of the new interface will appear here.</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================================================ COLOPHON -->
+<footer class="colophon" aria-labelledby="colophon-h">
+  <div class="grid">
+    <h2 id="colophon-h" class="c-full">Credits, licences, sources</h2>
+    <div class="c-half-a prose">
+      <p>Every picture of a game on this page was produced by gase itself from freely licensed software, by <code>scripts/docs-screenshots.sh</code>. The ROMs are not part of the repository; <code>scripts/fetch-test-roms.sh</code> downloads them.</p>
+      <p>Go deeper: <a href="https://github.com/bthuner/gase/blob/develop/docs/ARCHITECTURE.md">How gase works</a> (docs/ARCHITECTURE.md), <a href="https://github.com/bthuner/gase/blob/develop/docs/VIABILITY.md">the viability study</a> (docs/VIABILITY.md), <a href="https://github.com/bthuner/gase/blob/develop/benchmarks/README.md">benchmarks and profiling</a>, and the <a href="https://github.com/bthuner/gase">source code</a>, where every crate’s documentation starts with a tour of its chip.</p>
+      <p>Type: Archivo by Omnibus-Type, Source Serif 4 by Adobe, JetBrains Mono by JetBrains, all under the <a href="assets/fonts/OFL.txt">SIL Open Font License</a>. The debugger’s 8 × 8 font is font8x8 by Daniel Hepper, public domain.</p>
+    </div>
+    <div class="c-half-b table-wrap">
+      <table class="credits">
+        <thead><tr><th scope="col">Software shown</th><th scope="col">Author</th><th scope="col">Licence</th></tr></thead>
+        <tbody>
+          <tr><td>240p Test Suite 1.23</td><td>Artemio Urbina</td><td>GPL-2.0-or-later</td></tr>
+          <tr><td>genmd-imgrom test pattern</td><td>Sebastian Tomczak (little-scale)</td><td>MIT</td></tr>
+          <tr><td>Airstriker 1.50</td><td>Electrokinesis</td><td>Freeware</td></tr>
+          <tr><td>Right 2 Repair</td><td>Global Game Jam 2020 team</td><td>Game-jam release, non-commercial</td></tr>
+          <tr><td>The Spiral</td><td>Resistance</td><td>GPL-3.0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sign c-full" aria-hidden="true">gase<span>.</span></p>
+    <div class="end c-full"><span>gase · Sega Mega Drive / Genesis emulator in Rust · MIT</span><span>Sega, Mega Drive and Genesis are trademarks of Sega. gase is not affiliated with Sega.</span></div>
+  </div>
+</footer>
+</body>
+</html>
