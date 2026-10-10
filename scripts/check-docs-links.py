@@ -6,6 +6,9 @@
 Every relative href/src in the HTML files, every url() in their CSS, and
 every #fragment must resolve. External links (http, https, mailto) are not
 fetched. Exits with status 1 if anything is missing.
+
+Paths in GENERATED are built at deploy time, not committed: the player
+under play/ is assembled by `web/build.sh --out docs/play` in web.yml.
 """
 import html.parser
 import pathlib
@@ -14,6 +17,7 @@ import sys
 import urllib.parse
 
 root = pathlib.Path(__file__).resolve().parent.parent / "docs"
+GENERATED = ("play/",)
 
 
 class Collect(html.parser.HTMLParser):
@@ -55,6 +59,8 @@ def check(page):
         if not parsed.path:
             if parsed.fragment and parsed.fragment not in parser.ids:
                 errors.append(f"{page.name}: no element with id '{parsed.fragment}'")
+            continue
+        if parsed.path in GENERATED and base.parent == root:
             continue
         target = (base.parent / urllib.parse.unquote(parsed.path)).resolve()
         if not target.exists():

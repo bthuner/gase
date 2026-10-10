@@ -41,6 +41,7 @@
     <p class="where" aria-live="off"><span class="label">The making of</span> &nbsp;<b data-where>Contents</b></p>
     <nav class="tools" aria-label="Site">
       <a href="#contents">Contents</a>
+      <a href="play/">Play</a>
       <a href="https://github.com/bthuner/gase">Source</a>
       <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">Light</button>
     </nav>
@@ -57,6 +58,7 @@
     <h1 id="title">A Mega Drive you can read<span class="dot">.</span></h1>
     <p class="standfirst">How an emulator was built to be <em>understood</em>: one crate per chip, every CPU checked against millions of recorded test cases, and a rule that every fast path keeps the readable version beside it.</p>
     <p class="byline">gase · MIT licence · github.com/bthuner/gase</p>
+    <p class="try"><a class="play-link" href="play/">Try it in your browser</a></p>
   </div>
   <div class="grid hero-plate">
     <figure class="screen k3 reveal">
@@ -64,13 +66,14 @@
       <figcaption><span class="fig-no">FIG. 0</span><b>Right 2 Repair</b> (Global Game Jam 2020), frame 1,200, as gase draws it: 320 × 224 pixels, 15 colours on screen out of the 512 the console can make. Shown at a whole-number scale, pixel for pixel.</figcaption>
     </figure>
     <ul class="facts reveal" aria-label="gase in numbers">
-      <li>Crates, one per chip <b>7</b></li>
+      <li>Crates: one per chip, then app, ZIP and shells <b>12</b></li>
       <li>External dependencies of the core <b>0</b></li>
+      <li>Platforms: desktop, browser, Android, iOS <b>4</b></li>
       <li>Z80 test cases passed <b>1,604,000</b></li>
       <li>68000 test cases run <b>1,310,060</b></li>
-      <li>Pull requests to get here <b>17</b></li>
+      <li>Pull requests to get here <b>25</b></li>
       <li>Speed-up from profiling <b>1.5–1.9×</b></li>
-      <li><span><code>unsafe</code> blocks</span> <b>0</b></li>
+      <li><span><code>unsafe</code> blocks, all in the phone entry point</span> <b>2</b></li>
     </ul>
   </div>
 </section>
@@ -93,7 +96,12 @@
       <li><a href="#debugger"><span class="n">11</span><span class="t">A debugger for learners</span><span class="d">Watch the console think.</span></a></li>
       <li><a href="#performance"><span class="n">12</span><span class="t">Fast, and still readable</span><span class="d">A readable reference and a tested fast path.</span></a></li>
       <li><a href="#practice"><span class="n">13</span><span class="t">How the work was done</span><span class="d">Branches, pull requests, CI, frame hashes.</span></a></li>
-      <li class="upcoming"><a href="#next"><span class="n">14</span><span class="t">What’s next</span><span class="d">A GUI for desktop, web and mobile. ZIP files.</span></a></li>
+      <li><a href="#interface"><span class="n">14</span><span class="t">One interface, every screen</span><span class="d">Menus, controls and touch, written once.</span></a></li>
+      <li><a href="#zip"><span class="n">15</span><span class="t">Opening a ZIP file</span><span class="d">DEFLATE in a few hundred readable lines.</span></a></li>
+      <li><a href="#web"><span class="n">16</span><span class="t">Rust in a browser</span><span class="d">WebAssembly with nothing in between.</span></a></li>
+      <li><a href="#phones"><span class="n">17</span><span class="t">Rust on a phone</span><span class="d">Who calls main on Android and iOS.</span></a></li>
+      <li><a href="#crash"><span class="n">18</span><span class="t">A crash in someone else’s code</span><span class="d">Safe Rust, a dangling pointer, a smoke test.</span></a></li>
+      <li class="upcoming"><a href="#next"><span class="n">19</span><span class="t">What’s next</span><span class="d">Ideas worth building, and known gaps.</span></a></li>
     </ol>
   </div>
 </nav>
@@ -425,7 +433,7 @@ cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refre
     </div>
     <aside class="c-side side">
       <div class="bignum"><b>11–13×</b><span>real time in the first headless benchmark, before any profiling or optimisation.</span></div>
-      <div class="note"><span class="label">No I/O in the core</span><p><code>gase-core</code> takes ROM bytes and button states and returns pixels and audio samples. Any frontend, including the GUI now in progress, sits on top.</p></div>
+      <div class="note"><span class="label">No I/O in the core</span><p><code>gase-core</code> takes ROM bytes and button states and returns pixels and audio samples. Every frontend sits on top: the desktop window, the browser and the phone apps (chapters 14 to 17).</p></div>
     </aside>
     <div class="c-full figure filmstrip reveal">
       <figure><div class="crt"><img src="assets/img/240p-menu.png" width="320" height="224" loading="lazy" alt="The 240p Test Suite main menu: a menu of tests on a grey panel with a cartoon portrait of the author."></div><figcaption><b>240p Test Suite</b> 1.23, frame 300. A broad video test: patterns, scrolling, sprites, sound. GPL.</figcaption></figure>
@@ -961,7 +969,10 @@ cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refre
         <li><span><code>cargo test --workspace</code>: unit tests, hand-assembled whole-system programs, debugger equivalence</span></li>
         <li><span><code>cargo build -p gase --no-default-features</code>, proving the headless build has no external dependencies</span></li>
         <li><span><code>cargo doc --workspace --no-deps</code> with warnings as errors: the documentation is part of the product</span></li>
+        <li><span><code>cargo clippy -p gase-web --target wasm32-unknown-unknown</code>, and clippy for the five phone targets</span></li>
+        <li><span><code>scripts/smoke-sdl.sh</code>: the optimised program must still be running after five seconds (chapter 18)</span></li>
       </ol>
+      <p>Separate workflows build the browser version and the phone apps: an Android APK, and the iOS app for device and simulator.</p>
       <p>The big suites are too large for every push (the Z80 vectors alone are about 1.3 GB), so a second workflow runs them weekly and on demand, together with the test-ROM regression: each ROM run for a fixed number of frames with scripted presses, and an FNV-1a hash of the picture compared with a value that was only recorded after looking at the frame.</p>
     </div>
     <aside class="c-side side">
@@ -985,30 +996,243 @@ cycles:  4        <span class="c">// one opcode fetch: read at 51399, then refre
           <tr><td>#15</td><td>The learner debugger</td><td class="branch">feature/debugger</td><td class="when r">10 Oct 07:03</td></tr>
           <tr><td>#16</td><td>Fix: let the FIFO drain in a colour test</td><td class="branch">fix/cram-rgb-test-fifo</td><td class="when r">10 Oct 07:26</td></tr>
           <tr><td>#17</td><td>Performance pass and <code>benchmarks/</code></td><td class="branch">feature/performance</td><td class="when r">10 Oct 08:36</td></tr>
+          <tr><td>#18</td><td>Release 0.1.0 to <code>main</code></td><td class="branch">release/v0.1.0</td><td class="when r">10 Oct 09:28</td></tr>
+          <tr><td>#19</td><td>ZIP ROMs: an own DEFLATE decoder</td><td class="branch">feature/zip-roms</td><td class="when r">10 Oct 09:30</td></tr>
+          <tr><td>#20</td><td>This site, the making-of</td><td class="branch">feature/making-of</td><td class="when r">10 Oct 09:30</td></tr>
+          <tr><td>#22</td><td>The interface, controls, and the SDL crash fix</td><td class="branch">feature/app-ui</td><td class="when r">10 Oct 14:03</td></tr>
+          <tr><td>#23</td><td>The browser version, an installable PWA</td><td class="branch">feature/web</td><td class="when r">10 Oct 14:08</td></tr>
+          <tr><td>#24</td><td>Android and iOS apps</td><td class="branch">feature/mobile</td><td class="when r">10 Oct 14:10</td></tr>
         </tbody>
-        <caption>Merged pull requests, in order. #6 and #7 synchronised <code>main</code> and <code>develop</code> while the branch model settled. #16 exists because two correct branches, merged together, broke a test that assumed CRAM writes land instantly.</caption>
+        <caption>Merged pull requests, in order. #6, #7 and #21 synchronised <code>main</code> and <code>develop</code>. #16 exists because two correct branches, merged together, broke a test that assumed CRAM writes land instantly.</caption>
       </table>
       </div>
     </figure>
   </div>
 </section>
 
-<!-- ============================================================ 14 NEXT -->
-<section class="chapter" id="next" data-title="14 What’s next" aria-labelledby="next-h">
+<!-- ============================================================ 14 INTERFACE -->
+<section class="chapter" id="interface" data-title="14 One interface, every screen" aria-labelledby="interface-h">
   <header class="grid chapter-head">
-    <div class="rule label"><span>Chapter 14</span><span class="upcoming-mark">In progress</span></div>
+    <div class="rule label"><span>Chapter 14</span><span>crates/app · PR #22</span></div>
     <p class="num" aria-hidden="true">14</p>
+    <h2 id="interface-h">One interface, every screen</h2>
+    <p class="dek">Menus, settings, a file browser and touch controls, written once and drawn pixel by pixel, so the desktop, the browser and phones all run the same code.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Until version 0.1, gase was a command line and a window. Making it pleasant to use meant menus, a way to pick a game, settings that survive a restart, remappable controls, and on phones, buttons under your thumbs. Writing that four times, once per platform toolkit, would have quadrupled the code a learner has to read. So it lives in one crate, <code>gase-app</code>, with no dependencies and no I/O, just like the core.</p>
+      <p>The app draws itself. Every frame it paints its menus into a plain buffer of pixels with its own bitmap font, the same way the debugger does. A platform only has to show that buffer, play sound, and report keys, pad buttons and fingers. The interface is <em>immediate-mode</em>: there are no widget objects to keep in sync. Each frame the current screen is drawn from the settings and the console’s state, and input is handled as it is drawn.</p>
+      <h3>The platform contract</h3>
+      <p>Everything a platform must provide fits in one trait, <code>Platform</code>: read and write a named file, list a folder, ask for a ROM, report the time. Everything it gives the app is an <code>Event</code>: a key, a pad button or axis, a pointer, a dropped file, the app going to the background. Everything the app asks back comes through <code>Requests</code>: go fullscreen, quit, open the system’s document picker. A shell is the code that keeps that promise on one platform, and there are three: SDL2 for desktops and phones, and a WebAssembly one for browsers.</p>
+      <h3>Every controller at once</h3>
+      <p>The keyboard, any number of gamepads and the touch screen are mapped to the two console pads at the same time. Each device keeps its own set of pressed buttons, and the console sees their union. Nothing has to be switched over, and letting go of a key can’t release a button a gamepad is still holding. Every key and pad button can be remapped for both players.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">One rule, many devices</span><p>With touch controls on “Auto”, pressing a gamepad button hides the on-screen pad and centres the picture. Touching the screen brings them back. Whichever input was used last wins.</p></div>
+      <div class="note"><span class="label">Settings you can read</span><p>Settings are a text file of <code>key = value</code> lines with comments, so a learner can open it, see what each option is called, and edit it by hand.</p></div>
+    </aside>
+    <figure class="c-fig figure ui-fig reveal">
+      <div class="plate"><img class="ui-shot" src="assets/img/ui-home.png" width="960" height="672" loading="lazy" alt="The gase home screen: the gase logo with ‘Mega Drive / Genesis’ beside it, an ‘Open ROM…’ entry, a recent list with Right 2 Repair, 240p Test Suite, Airstriker and The Spiral, then Settings and Quit. A hint at the bottom says a ROM file can be dropped on the window."></div>
+      <figcaption><span class="fig-no">FIG. 14</span>The home screen on the desktop, saved by <code>gase --dump-ui</code>. Right 2 Repair, at the top of the recent list, is a <code>.zip</code> file (chapter 15). The same option draws any screen of the app without opening a window, which is how every picture in this chapter was made, and how the app’s tests look at the screens.</figcaption>
+    </figure>
+    <div class="c-fig figure ui-row reveal">
+      <figure>
+        <div class="plate"><img src="assets/img/ui-browser.png" width="960" height="672" loading="lazy" alt="The built-in file browser listing a Games folder: 240p Test Suite.bin, Airstriker.md, Right 2 Repair.zip, The Spiral.bin."></div>
+        <figcaption><b>Open ROM.</b> A built-in file browser for desktops, controllable from a gamepad. Phones use the system’s picker instead.</figcaption>
+      </figure>
+      <figure>
+        <div class="plate"><img src="assets/img/ui-controls.png" width="960" height="672" loading="lazy" alt="The Controls settings screen: player 1 and 2 pad types set to 6 buttons, touch controls set to Auto, remapping entries for each player’s keyboard and gamepad, and a list of connected gamepads."></div>
+        <figcaption><b>Controls.</b> Three- or six-button pads, touch controls, and remapping for each player’s keyboard and gamepad.</figcaption>
+      </figure>
+      <figure>
+        <div class="plate"><img src="assets/img/ui-remap.png" width="960" height="672" loading="lazy" alt="Remapping player 1’s keyboard: a dialog says ‘Press a key for B’, over the list of console buttons and their keys."></div>
+        <figcaption><b>Remapping.</b> Pick a console button, then press its new key or pad button.</figcaption>
+      </figure>
+    </div>
+    <div class="c-text prose figure">
+      <h3>Thumbs on glass</h3>
+      <p>The touch pad is the app’s own, too, so it is identical on Android, iOS and in a mobile browser. Each finger is tracked separately in a small table of the fingers the pad owns. A finger that lands on the d-pad keeps steering it even if it slides off. A finger in the gap between two buttons presses both, so one thumb can hold B and C. All sizes are derived from the screen size, so the same code serves a small phone and a tablet.</p>
+      <p>The layout has one rule above all: never cover the game. Writing this chapter caught a bug there. Taking the landscape picture below showed Start and Mode drawn in the middle of the bottom edge, right over Right 2 Repair’s “PRESS START”. The comment in the code said “corners in landscape”, but the code didn’t do it. A failing test came first, then the fix, in pull request #25. The two buttons now sit in the black borders, above each thumb.</p>
+    </div>
+    <div class="c-fig figure phones reveal">
+      <figure class="portrait">
+        <div class="plate"><img src="assets/img/ui-phone-game.png" width="780" height="1688" loading="lazy" alt="gase on a phone held upright: Right 2 Repair’s title screen at the top, and below it a d-pad, six round buttons (A B C, X Y Z), Mode and Start, and a menu button."></div>
+        <figcaption><b>Portrait.</b> The game at the top, the pad below.</figcaption>
+      </figure>
+      <figure class="landscape">
+        <div class="plate"><img src="assets/img/ui-phone-landscape.png" width="1688" height="780" loading="lazy" alt="gase on a phone held sideways: the game in the middle, the d-pad and Mode on the left border, the six buttons and Start on the right border, the menu button at the top right."></div>
+        <figcaption><b>Landscape.</b> The controls in the borders beside the picture.</figcaption>
+      </figure>
+      <figure class="portrait">
+        <div class="plate"><img src="assets/img/ui-phone-home.png" width="780" height="1688" loading="lazy" alt="The gase home screen laid out for a phone: the logo, Open ROM…, the recent list and Settings, with no Quit entry."></div>
+        <figcaption><b>Home, on a phone.</b> No Quit: phones close apps their own way.</figcaption>
+      </figure>
+    </div>
+    <p class="c-text caption">Phone screens are drawn at two pixels per point and shown here at the size of a 390-point-wide phone. They come from <code>gase --mobile --dump-ui</code>, which runs the phone shell’s layout on a desktop.</p>
+  </div>
+</section>
+
+<!-- ============================================================ 15 ZIP -->
+<section class="chapter" id="zip" data-title="15 Opening a ZIP file" aria-labelledby="zip-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 15</span><span>crates/zip · PR #19</span></div>
+    <p class="num" aria-hidden="true">15</p>
+    <h2 id="zip-h">Opening a ZIP file</h2>
+    <p class="dek">Most ROM collections are zipped. Reading them takes a decompressor, and writing one is a small lesson in how nearly all compressed files work.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Pulling in a library would have been the easy way. But the rule of few dependencies had held so far, and DEFLATE, the compression inside ZIP files (and gzip, and PNG), turns out to be a good thing to learn from: about 900 lines, tests aside, that combine two old ideas. <code>gase-zip</code> reads ZIP archives, inflates DEFLATE streams and checks CRC-32 sums. When <code>Cartridge::from_bytes</code> sees the bytes <code>PK\3\4</code> at the start of a file, it opens the archive and takes the ROM inside. Every platform gets ZIP support from that one check.</p>
+      <p>The first idea is <strong>LZ77</strong>. Instead of storing text it has already seen, the compressor writes “go back <em>distance</em> bytes and copy <em>length</em> bytes from there”. The decompressor’s own output is the dictionary. A copy may overlap what it is writing: distance 1, length 100 repeats one byte a hundred times. Try it:</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>2,463</b><span>lines in <code>gase-zip</code>, about half of them documentation and tests. Its tests decode streams made by zlib at every compression level and check every byte.</span></div>
+    </aside>
+    <figure class="c-fig figure lz reveal" data-lz>
+      <div class="controls">
+        <label for="lz-input">Text to compress (greedy LZ77, matches of 3 or more bytes)</label>
+        <input id="lz-input" type="text" value="Sega Genesis, Sega Mega Drive. Mega Drive, Mega Drive!" spellcheck="false" autocomplete="off">
+      </div>
+      <div class="lz-out" aria-live="polite" data-lz-out><noscript>This demonstration needs JavaScript. In words: each repeated stretch of text becomes a pair ⟨length, distance⟩.</noscript></div>
+      <p class="lz-stats" data-lz-stats></p>
+      <figcaption><span class="fig-no">FIG. 15</span>Each red stretch is a back-reference ⟨length, distance⟩ rather than literal text. The small numbers are its distance. Real DEFLATE looks back up to 32 KB and searches harder, but the idea is the same.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <p>The second idea is <strong>Huffman coding</strong>: common symbols get short bit patterns, rare ones long patterns. DEFLATE puts literal bytes, match lengths and an end-of-block marker into one 286-symbol alphabet, with distances in a second one. Each block either uses a code fixed by the standard or sends its own code first. To save space, it sends that code as a list of bit lengths, itself compressed with a third Huffman code. The comments in <code>crates/zip/src/inflate.rs</code> take this apart table by table, and are worth reading even if you never touch an emulator.</p>
+      <p>Decoding bit by bit is the readable reference. The fast path decodes most codes with one lookup of the next 10 bits, and tests check that both give identical results, errors included, on zlib-made and random streams: the rule from chapter 12 again. The fast path inflates a 4 MiB ROM in about 19 ms.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 16 WEB -->
+<section class="chapter" id="web" data-title="16 Rust in a browser" aria-labelledby="web-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 16</span><span>crates/web · web/ · PR #23</span></div>
+    <p class="num" aria-hidden="true">16</p>
+    <h2 id="web-h">Rust in a browser</h2>
+    <p class="dek">The same emulator and the same interface compiled to WebAssembly, with nothing in between: no binding generator, no bundler, a few hand-written JavaScript modules.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">The usual way to put Rust in a web page is <code>wasm-bindgen</code>, which generates the glue between the two languages. It works well, but it hides exactly what a learner would want to see. So <code>gase-web</code> does without it. The module is built for <code>wasm32-unknown-unknown</code> and exports about twenty plain functions that take and return numbers. The page imports nine functions back: read and write a file, push sound, make a request. Six JavaScript modules, loaded as they are written, do the rest.</p>
+      <p><a class="play-link" href="play/">Play gase in your browser</a></p>
+      <h3>One shared memory</h3>
+      <p>A WebAssembly module’s memory is a single <code>ArrayBuffer</code> that JavaScript can see, and a Rust pointer is just an offset into it. So no picture or sound is ever copied across the boundary. Rust returns <code>vec.as_ptr()</code> as a number, and the page wraps those bytes in a typed array and hands them to the canvas. After every frame the module fills a seventeen-word <em>frame description</em>, telling the page where the picture is, how big it is, where to draw it and how to pace. The page reads it through one <code>Uint32Array</code>, like a C struct.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>169 <small>KB</small></b><span>for the whole emulator and interface over the network (515 KB uncompressed). Flat out, in headless Chromium, it emulates several hundred frames per second: many times the console’s 60.</span></div>
+      <div class="note"><span class="label">Unsafe, by name only</span><p>Exporting a function under a fixed name takes <code>#[unsafe(no_mangle)]</code>, and importing one takes an <code>unsafe extern</code> block. Both live in a single file, <code>abi.rs</code>, which contains no <code>unsafe { }</code> block: the imports are declared <code>safe fn</code>.</p></div>
+    </aside>
+    <figure class="c-fig figure mem reveal">
+      <svg viewBox="0 0 960 205" role="img" aria-labelledby="mem-t mem-d">
+        <title id="mem-t">WebAssembly linear memory shared by Rust and JavaScript</title>
+        <desc id="mem-d">One long strip of memory. Rust owns the frame buffer, the audio samples, the frame description and an inbox. JavaScript reads the frame buffer through a Uint8ClampedArray and the samples through an Int16Array, and writes ROM bytes into the inbox.</desc>
+        <text class="big" x="0" y="20">Linear memory: one ArrayBuffer, addresses are byte offsets</text>
+        <rect class="cell" x="0" y="40" width="960" height="60"/>
+        <rect class="cell" x="0" y="40" width="160" height="60"/><text x="12" y="76">emulator state</text>
+        <rect class="cell hot" x="200" y="40" width="300" height="60"/><text x="212" y="66">picture</text><text x="212" y="86">320 × 224 × 4 bytes</text>
+        <rect class="cell hot" x="520" y="40" width="130" height="60"/><text x="532" y="66">sound</text><text x="532" y="86">i16 samples</text>
+        <rect class="cell hot" x="670" y="40" width="120" height="60"/><text x="682" y="66">frame</text><text x="682" y="86">17 × u32</text>
+        <rect class="cell" x="810" y="40" width="150" height="60"/><text x="822" y="66">inbox</text><text x="822" y="86">ROMs, text</text>
+        <path class="wire red" d="M350 100 V150"/><path class="wire red" d="M585 100 V150"/><path class="wire red" d="M730 100 V150"/><path class="wire" d="M885 150 V100"/>
+        <text x="270" y="172">Uint8ClampedArray</text><text x="270" y="192">→ the canvas</text>
+        <text x="520" y="172">Int16Array</text><text x="520" y="192">→ AudioWorklet</text>
+        <text x="680" y="172">Uint32Array</text><text x="680" y="192">→ the page</text>
+        <text x="830" y="172">the page</text><text x="830" y="192">writes in</text>
+      </svg>
+      <figcaption><span class="fig-no">FIG. 16</span>Nothing is serialised. Rust hands JavaScript numbers (pointers and lengths), and JavaScript makes a fresh typed-array view over the memory each time, because growing the memory replaces the buffer. The boundary between the languages is a list of integer arguments and a strip of shared memory.</figcaption>
+    </figure>
+    <figure class="c-fig figure browser-fig reveal">
+      <div class="plate">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>gase · play/</span></div>
+        <img src="assets/img/web-home.png" width="1280" height="720" loading="lazy" alt="gase’s home screen in a browser page, with a slim footer: ‘gase is a Mega Drive emulator written in Rust, running here as WebAssembly. Your games, saves and settings stay in this browser.’ and a link to play the 240p Test Suite.">
+      </div>
+      <figcaption><span class="fig-no">FIG. 17</span>The player in headless Chromium. Without a game at hand, one click downloads the GPL-licensed 240p Test Suite from a copy on GitHub and checks its SHA-256 before running it. The page is an installable PWA that works offline, with touch controls on phones.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <h3>Three things browsers make hard</h3>
+      <ul>
+        <li><strong>Saving.</strong> The app expects to read a file and get it back at once, but the browser’s IndexedDB answers later. So at startup the page copies everything stored into memory. Reads come from that copy, and writes go to the database in the background, one transaction per frame.</li>
+        <li><strong>Sound.</strong> Audio plays on a real-time thread, inside an <code>AudioWorklet</code>. The fastest way to feed it is a ring buffer in shared memory, but browsers only allow that on pages served with special isolation headers, and GitHub Pages can’t send them. So the page also knows how to post chunks of samples, which is the path this site uses.</li>
+        <li><strong>Pace.</strong> A browser redraws on its own clock. Each redraw owes <em>elapsed time × 59.92</em> emulated frames, with the remainder carried over. The sound queue only adds or skips a frame when it drifts more than two frames from its target. An early version, which ran frames until the queue was full, stuttered between zero and two frames per redraw.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 17 PHONES -->
+<section class="chapter" id="phones" data-title="17 Rust on a phone" aria-labelledby="phones-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 17</span><span>crates/mobile · mobile/ · PR #24</span></div>
+    <p class="num" aria-hidden="true">17</p>
+    <h2 id="phones-h">Rust on a phone</h2>
+    <p class="dek">SDL2 already runs on Android and iOS, so the phone apps reuse the desktop’s shell. What is left is the question of who calls <code>main</code>.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">Neither phone system starts a program by calling <code>main</code>. On Android, the Java virtual machine starts an activity. SDL’s <code>SDLActivity</code> loads two native libraries, <code>libSDL2.so</code> and <code>libmain.so</code>, and calls the C function <code>SDL_main</code> on a thread of its own. On iOS, a tiny Objective-C <code>main</code> hands control to UIKit, and once the app has launched, SDL calls the same <code>SDL_main</code>. The <code>gase-mobile</code> crate exports exactly that function: built as a shared library for Android, and as a static library linked into the iOS app.</p>
+      <p>From there it is the desktop program with a different <code>Shell</code>. Files live in the app’s private storage, ROMs come from the system’s document picker or “Open with”, the screen rotates, and there is no Quit. Copying a picked file into the app is a few dozen lines of Java and Objective-C. That glue then hands the copy’s path back as an ordinary SDL “file dropped” event, which the shell already understood from the desktop.</p>
+      <h3>A phone can kill you at any moment</h3>
+      <p>A desktop program runs until it is closed. A phone app sent to the background may never be woken again. So when gase goes to the background it saves the game’s battery RAM and the settings at once, opens the pause menu, stops drawing and sleeps without using the CPU. Coming back, it drops the stale sound and resumes. If the system takes the graphics device away, SDL says so and the textures are recreated.</p>
+    </div>
+    <aside class="c-side side">
+      <div class="bignum"><b>2</b><span><code>unsafe { }</code> blocks in the whole workspace, both in <code>crates/mobile/src/native.rs</code>: reading the C <code>argv</code> that <code>SDL_main</code> receives. Everywhere else, unsafe code is forbidden by the compiler.</span></div>
+      <div class="note"><span class="label">Built, not yet held</span><p>Continuous integration builds a 3.3 MB Android APK for three processor types and an iOS app for device and simulator, and checks their contents. Nobody has run them on a phone yet. <code>mobile/README.md</code> has the checklist for doing that.</p></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============================================================ 18 CRASH -->
+<section class="chapter" id="crash" data-title="18 A crash in someone else’s code" aria-labelledby="crash-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 18</span><span>crates/gase/src/sdl.rs · scripts/smoke-sdl.sh</span></div>
+    <p class="num" aria-hidden="true">18</p>
+    <h2 id="crash-h">A crash in someone else’s code</h2>
+    <p class="dek">The workspace forbids unsafe code. The new window still crashed with a segmentation fault, but only in optimised builds.</p>
+  </header>
+  <div class="grid chapter-body">
+    <div class="c-text prose">
+      <p class="dropcap">The debug build of the new interface ran fine. The release build died with <code>SIGSEGV</code> within a second of opening its window. Every unit test passed, because none of them opens a window. <code>gdb</code> placed the crash inside SDL, copying pixels into a texture. <code>valgrind</code> was more precise: an <em>uninitialised value created by a stack allocation</em>, followed by writes to memory that belonged to nobody.</p>
+      <p>Uploading a picture to the GPU went through <code>sdl2</code>’s safe wrapper, <code>Texture::with_lock(rect, …)</code>. Inside that crate it looks like this:</p>
+    </div>
+    <aside class="c-side side">
+      <div class="note"><span class="label">The lesson</span><p><code>forbid(unsafe_code)</code> covers your own crates, not your dependencies. A safe API is only as sound as the <code>unsafe</code> code inside it, and a test suite that never runs that code can’t notice.</p></div>
+    </aside>
+    <figure class="c-fig figure reveal">
+<pre class="code"><code>let (rect_raw_ptr, height) = match rect.into() {
+    Some(ref rect) =&gt; (rect.raw(), rect.height() as usize),
+    None =&gt; (ptr::null(), q.height as usize),
+};
+// `rect.into()` was a temporary: it is gone here, and rect_raw_ptr points
+// at the stack slot where it used to be.
+let ret = sys::SDL_LockTexture(self.raw, rect_raw_ptr, &amp;mut pixels, &amp;mut pitch);</code></pre>
+      <figcaption><span class="fig-no">FIG. 18</span><code>sdl2</code> 0.37, <code>render.rs</code>. The <code>Option&lt;Rect&gt;</code> lives only until the end of the <code>let</code> statement, but a raw pointer into it outlives it. In a debug build the old value is usually still there. The optimiser reuses the slot, so SDL reads a garbage rectangle and computes an address far outside the texture.</figcaption>
+    </figure>
+    <div class="c-text prose figure">
+      <p>The fix is one word: lock the whole texture with <code>None</code>, which passes a null pointer and needs no temporary. SDL hands back the same buffer either way, so it costs nothing. <code>valgrind</code> went quiet. The doc comment on <code>upload</code> in <code>crates/gase/src/sdl.rs</code> records why the rectangle must never come back.</p>
+      <p>Fixing the crash was not enough on its own: it also had to be impossible to miss next time. <code>scripts/smoke-sdl.sh</code> runs the optimised program with SDL’s dummy video and audio drivers and fails unless it is still running after five seconds. It was checked against the broken build first (exit 139, a segfault) before being trusted on the fixed one. It now runs in CI on every pull request.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 19 NEXT -->
+<section class="chapter" id="next" data-title="19 What’s next" aria-labelledby="next-h">
+  <header class="grid chapter-head">
+    <div class="rule label"><span>Chapter 19</span><span class="upcoming-mark">Ideas</span></div>
+    <p class="num" aria-hidden="true">19</p>
     <h2 id="next-h">What’s next</h2>
-    <p class="dek">The core has no idea what a window is. That was deliberate, and it is about to pay off.</p>
+    <p class="dek">The core still has no idea what a window is. Everything below can be built on top of it, and each item is a lesson in its own right.</p>
   </header>
   <div class="grid chapter-body">
     <div class="c-wide">
       <ul class="next-list">
-        <li><div><p class="upcoming-mark">Upcoming</p><h3>A GUI for desktop, web and mobile</h3></div><p>Today gase is a command-line program with an SDL2 window. A graphical interface is being built on separate branches, on top of the same I/O-free core, aiming at the desktop, the browser and phones. This chapter will show it when it lands.</p></li>
-        <li><div><p class="upcoming-mark">Upcoming</p><h3>Loading games from ZIP files</h3></div><p>Most ROM collections are zipped. Reading them directly, without unpacking first, is in progress too, in keeping with the rule of few dependencies.</p></li>
-        <li><div><p class="upcoming-mark">Known gaps</p><h3>What gase does not do yet</h3></div><p>Master System mode, the Mega CD and the 32X are not supported. Mid-line raster changes take effect on the next line. VDP slot <em>positions</em> follow the documented structure rather than measured positions, though the counts are exact.</p></li>
+        <li><div><p class="upcoming-mark">Seeing</p><h3>Pictures as they were</h3></div><p>CRT and composite-video filters: scanlines, the dot crawl and blended dithering that artists of the time drew for. Run-ahead, to hide the latency a modern screen adds.</p></li>
+        <li><div><p class="upcoming-mark">Playing</p><h3>Time as a material</h3></div><p>Rewind on a scrubbable timeline, input recording for replays and tool-assisted runs, rollback netplay (the save states are already deterministic), cheats, per-game settings, resuming exactly where you stopped.</p></li>
+        <li><div><p class="upcoming-mark">Learning</p><h3>More ways to look inside</h3></div><p>A VGM recorder for the music, a per-channel oscilloscope, a VRAM editor, and a lesson mode that pauses on events such as the first DMA or the first interrupt and explains them.</p></li>
+        <li><div><p class="upcoming-mark">Hardware</p><h3>The rest of the family</h3></div><p>Master System and Game Gear mode (the Z80 is already here), then the Mega CD and the 32X. The light gun, the mouse and the four-player adapter.</p></li>
+        <li><div><p class="upcoming-mark">Everyone</p><h3>Accessibility</h3></div><p>Turbo and hold-to-toggle buttons, a high-contrast and larger interface, and menus a screen reader can follow.</p></li>
+        <li><div><p class="upcoming-mark">Known gaps</p><h3>What gase does not do yet</h3></div><p>Mid-line raster changes take effect on the next line. VDP slot <em>positions</em> follow the documented structure rather than measured positions, though the counts are exact. The phone apps have not been run on a device, and they don’t yet avoid notches and rounded corners.</p></li>
       </ul>
-      <div class="next-slot figure" data-slot="gui-screenshots">Screenshots of the new interface will appear here.</div>
     </div>
   </div>
 </section>
