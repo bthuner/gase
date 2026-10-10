@@ -245,6 +245,16 @@ impl Psg {
                     sum += level(self.flip_flops[i]) * i64::from(left);
                     break;
                 }
+                if ultrasonic && due == 1 {
+                    // Period 0 or 1, counter at its reload: it reloads on
+                    // every tick from now on while the output stays high,
+                    // so all the remaining ticks can be done at once. (This
+                    // is how games play samples on the PSG.)
+                    sum += volume * i64::from(left);
+                    self.flip_flops[i] ^= left % 2 == 1;
+                    self.counters[i] = 1;
+                    break;
+                }
                 sum += level(self.flip_flops[i]) * i64::from(due - 1);
                 self.counters[i] = reload;
                 self.flip_flops[i] = !self.flip_flops[i];
