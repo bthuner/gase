@@ -32,7 +32,7 @@ The core is a library with no I/O: it takes ROM bytes and button states and
 returns pixels and audio samples. That keeps it testable (see
 `crates/core/tests/smoke.rs`, which runs hand-assembled programs) and
 portable to any frontend. The user interface is built the same way: a
-library without I/O (`gase-app`, section 10) that every platform's thin
+library without I/O (`gase-app`, section 11) that every platform's thin
 shell drives.
 
 ### Loading ROMs and archives
@@ -170,8 +170,17 @@ Frontends do not care which kind it is: `Cartridge::save_data()` and
 * The core has whole-system tests using tiny hand-assembled programs.
 * CI runs formatting, clippy, all tests and a dependency-free build on every
   pull request, and the big vector suites weekly.
+* `scripts/smoke-sdl.sh` runs the optimised windowed program with SDL's
+  dummy drivers and fails unless it is still running after five seconds.
+  Unit tests never open a window, so this is what catches crashes in the
+  shell. It exists because of one: `sdl2` 0.37's safe
+  `Texture::with_lock(Some(rect), ..)` hands SDL a pointer to a temporary
+  that is already gone, which only crashed once the optimiser reused its
+  stack slot (see `upload` in `crates/gase/src/sdl.rs`). Forbidding
+  `unsafe` in our crates says nothing about the `unsafe` inside
+  dependencies.
 
-## 8. Using the debugger to learn
+## 9. Using the debugger to learn
 
 The debugger (F1 in the window, see the README for its keys) shows the
 console's state as the chips see it. A few experiments that make the
@@ -205,7 +214,7 @@ plain pixel buffers with a public-domain 8×8 font
 the headless runner (`--dump-vram`, `--dump-cram`, `--dump-debugger`,
 `--break`).
 
-## 9. Performance
+## 10. Performance
 
 At the time of writing gase runs the test ROMs at 1000-1800 frames per
 second on one core of a modest 2.1 GHz Xeon, 17-30 times real time. The
@@ -243,7 +252,7 @@ works; read the fast path to learn how to make it quick. On top of that,
 every optimisation must leave the test-ROM frame hashes, the WAV output
 and the CPU test vectors bit-identical.
 
-## 10. The user interface and the platform contract
+## 11. The user interface and the platform contract
 
 An emulator frontend has to do the same things on every platform: show a
 picture, play sound, read buttons, open files, offer menus. Only the
@@ -256,7 +265,7 @@ picture, play sound, read buttons, open files, offer menus. Only the
 * A **shell** per platform does the *how*: `crates/gase/src/sdl.rs` (with
   `desktop.rs` for files) on desktop and, the same file with `mobile.rs`
   for files, on Android and iOS (see "Mobile shells" below);
-  `crates/web` with the page in `web/` in a browser (section 11).
+  `crates/web` with the page in `web/` in a browser (section 12).
 
 The contract between them is the `Platform` trait plus three flows
 (`crates/app/src/platform.rs` documents it with a diagram):
@@ -346,7 +355,7 @@ gamepad is being used (the last input wins), and `Event::Suspend` writes
 the save and settings immediately, because a phone may kill a backgrounded
 app without warning.
 
-## 11. The web shell
+## 12. The web shell
 
 `crates/web` (gase-web) is the platform contract implemented for a
 browser tab, and `web/` is the page that hosts it. It is written to show

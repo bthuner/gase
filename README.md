@@ -9,7 +9,9 @@ to be fast, compatible and pleasant to use.
 
 **[The making of gase](https://bthuner.github.io/gase/)** tells how it was
 built, chip by chip, with pictures made by the emulator itself (the site's
-source is [`docs/index.html`](docs/index.html)).
+source is [`docs/index.html`](docs/index.html)). Once the site is
+published, **[gase runs in your browser](https://bthuner.github.io/gase/play/)**
+too.
 
 | Goal | How |
 |---|---|
@@ -17,7 +19,7 @@ source is [`docs/index.html`](docs/index.html)).
 | Performance | Pre-decoded/static-dispatch CPU cores, scanline renderer, lazy audio catch-up |
 | Compatibility | CPU cores validated against ~2.6 million test vectors, SRAM and serial EEPROM saves, SSF2 mapper, 6-button pads, PAL/NTSC |
 | Quality of life | Menus for keyboard, gamepad, mouse and touch; save states with previews, rewind, fast-forward, remappable controls, gamepad hot-plug, dynamic audio rate control |
-| Best practices | `forbid(unsafe_code)`, clippy-clean, CI, one external dependency (SDL2, optional) |
+| Best practices | `forbid(unsafe_code)` (the web and phone entry points only *deny* it, in one documented module each), clippy-clean, CI, one external dependency (SDL2, optional) |
 
 ## Building
 
@@ -68,7 +70,7 @@ and can publish it (opt-in, see `.github/workflows/web.yml`). The .wasm
 is never committed. `web/tests/smoke.mjs` drives the page in a headless
 Chromium (needs the `playwright` package; not part of CI yet). How the
 shell works: [`crates/web/src/lib.rs`](crates/web/src/lib.rs) and section
-11 of [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+12 of [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Using it
 
@@ -235,9 +237,13 @@ scripts/check-docs-links.py           # no broken relative links
 ```
 
 `scripts/docs-screenshots.sh` uses the headless release build
-(`--screenshot`, `--dump-debugger`, `--trace`, `--wav`) and a small helper
-outside the workspace, `scripts/docs-shots`, for scripted button presses
-and pictures of the VDP's individual layers.
+(`--screenshot`, `--dump-debugger`, `--dump-ui`, `--trace`, `--wav`) and a
+small helper outside the workspace, `scripts/docs-shots`, for scripted
+button presses and pictures of the VDP's individual layers. The picture of
+the browser version needs Node.js and the `playwright` package (found
+through `NODE_PATH`); without them that one step is skipped. The site's
+"Play" links point to `play/`, which the `Web` workflow builds at deploy
+time (`web/build.sh --out docs/play` locally).
 
 ## Contributing
 
