@@ -120,6 +120,35 @@ pub trait State {
     fn save(&self, w: &mut Writer);
     /// Overwrite `self` with data read from `r`.
     fn load(&mut self, r: &mut Reader<'_>) -> Result<(), Error>;
+
+    /// Serialise a whole slice: by default item by item, which is the
+    /// reference behaviour.
+    ///
+    /// Arrays and vectors save through this method so that a type can do
+    /// better for many items at once: `u8` copies the whole slice in one go,
+    /// which matters for the console's memories (VRAM, RAM, ...), since the
+    /// frontend snapshots the state several times a second for rewind.
+    /// Overrides must produce exactly the bytes of the default.
+    fn save_slice(items: &[Self], w: &mut Writer)
+    where
+        Self: Sized,
+    {
+        for item in items {
+            item.save(w);
+        }
+    }
+
+    /// Load a whole slice: the counterpart of [`State::save_slice`], with
+    /// the same rule for overrides.
+    fn load_slice(items: &mut [Self], r: &mut Reader<'_>) -> Result<(), Error>
+    where
+        Self: Sized,
+    {
+        for item in items {
+            item.load(r)?;
+        }
+        Ok(())
+    }
 }
 
 macro_rules! impl_int {
@@ -139,7 +168,28 @@ macro_rules! impl_int {
     )*};
 }
 
-impl_int!(u8, u16, u32, u64, i8, i16, i32, i64);
+impl_int!(u16, u32, u64, i8, i16, i32, i64);
+
+/// Bytes are saved as themselves, so a slice of bytes is saved as a copy of
+/// itself (see [`State::save_slice`]).
+impl State for u8 {
+    #[inline]
+    fn save(&self, w: &mut Writer) {
+        w.bytes(&[*self]);
+    }
+    #[inline]
+    fn load(&mut self, r: &mut Reader<'_>) -> Result<(), Error> {
+        *self = r.bytes(1)?[0];
+        Ok(())
+    }
+    fn save_slice(items: &[Self], w: &mut Writer) {
+        w.bytes(items);
+    }
+    fn load_slice(items: &mut [Self], r: &mut Reader<'_>) -> Result<(), Error> {
+        items.copy_from_slice(r.bytes(items.len())?);
+        Ok(())
+    }
+}
 
 impl State for usize {
     fn save(&self, w: &mut Writer) {
@@ -193,15 +243,10 @@ impl State for bool {
 
 impl<T: State, const N: usize> State for [T; N] {
     fn save(&self, w: &mut Writer) {
-        for item in self {
-            item.save(w);
-        }
+        T::save_slice(self, w);
     }
     fn load(&mut self, r: &mut Reader<'_>) -> Result<(), Error> {
-        for item in self {
-            item.load(r)?;
-        }
-        Ok(())
+        T::load_slice(self, r)
     }
 }
 
@@ -211,9 +256,7 @@ impl<T: State, const N: usize> State for [T; N] {
 impl<T: State> State for Vec<T> {
     fn save(&self, w: &mut Writer) {
         self.len().save(w);
-        for item in self {
-            item.save(w);
-        }
+        T::save_slice(self, w);
     }
     fn load(&mut self, r: &mut Reader<'_>) -> Result<(), Error> {
         let mut len = 0usize;
@@ -221,10 +264,7 @@ impl<T: State> State for Vec<T> {
         if len != self.len() {
             return Err(Error::Invalid("buffer length"));
         }
-        for item in self {
-            item.load(r)?;
-        }
-        Ok(())
+        T::load_slice(self, r)
     }
 }
 
@@ -271,8 +311,33 @@ mod tests {
         c.load(&mut r).unwrap();
         d.load(&mut r).unwrap();
         e.load(&mut r).unwrap();
-        assert_eq!((a, b, c, d, e), (0xDEAD_BEEF, -5, true, [1, 2, 3], vec![7; 4]));
+        assert_eq!(
+            (a, b, c, d, e),
+            (0xDEAD_BEEF, -5, true, [1, 2, 3], vec![7; 4])
+        );
         assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn byte_slices_match_the_item_by_item_reference() {
+        let data: Vec<u8> = (0..=255).chain(0..100).collect();
+        let mut fast = Writer::new();
+        u8::save_slice(&data, &mut fast);
+        let mut reference = Writer::new();
+        for byte in &data {
+            byte.save(&mut reference);
+        }
+        let bytes = fast.into_bytes();
+        assert_eq!(bytes, reference.into_bytes());
+
+        let mut loaded = vec![0u8; data.len()];
+        u8::load_slice(&mut loaded, &mut Reader::new(&bytes)).unwrap();
+        assert_eq!(loaded, data);
+        let mut short = [0u8; 4];
+        assert_eq!(
+            u8::load_slice(&mut short, &mut Reader::new(&bytes[..3])),
+            Err(Error::UnexpectedEof)
+        );
     }
 
     #[test]
@@ -287,6 +352,9 @@ mod tests {
         vec![0u8; 3].save(&mut w);
         let bytes = w.into_bytes();
         let mut v = vec![0u8; 4];
-        assert_eq!(v.load(&mut Reader::new(&bytes)), Err(Error::Invalid("buffer length")));
+        assert_eq!(
+            v.load(&mut Reader::new(&bytes)),
+            Err(Error::Invalid("buffer length"))
+        );
     }
 }

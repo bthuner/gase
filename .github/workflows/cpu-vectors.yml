@@ -1,0 +1,40 @@
+# The CPU cores are validated against large JSON test-vector suites
+# (TomHarte/SingleStepTests). They are too big to download on every push,
+# so this runs weekly and on demand.
+name: Slow test suites (CPU vectors, test ROMs)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  vectors:
+    strategy:
+      fail-fast: false
+      matrix:
+        cpu: [m68k, z80]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Download vectors
+        run: scripts/fetch-${{ matrix.cpu }}-tests.sh
+      - name: Run vectors
+        run: cargo test -p gase-${{ matrix.cpu }} --profile fast-test -- --ignored
+
+  test-roms:
+    name: Test ROM regression (frame hashes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Download freely licensed test ROMs
+        run: scripts/fetch-test-roms.sh
+      - name: Run them
+        run: cargo test -p gase-core --profile fast-test --test test_roms -- --ignored
