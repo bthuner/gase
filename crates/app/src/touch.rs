@@ -113,7 +113,8 @@ impl Layout {
         let b = (radius * 45 / 100).min(side * 10 / 66).max(13);
         let pill = (b * 3, 12);
 
-        // Bottom row for Start/Mode in portrait; corners in landscape.
+        // Start/Mode: a bottom row in portrait; the side borders in
+        // landscape (see below).
         let start_y = area.bottom() - m - pill.1 / 2;
         let dpad_y = if portrait {
             area.y + (area.h - pill.1 - m) / 2
@@ -172,16 +173,23 @@ impl Layout {
                 );
             }
         } else {
+            // In the side borders, above the thumbs' resting places: Start
+            // over the face buttons, Mode over the d-pad. (At the bottom
+            // centre they would cover the picture.)
+            // C (or Z above it) is the highest face button.
+            let cluster_top = c_y - if six_button { step } else { 0 } - b;
+            let start_y = cluster_top - m - pill.1 / 2;
             push(
                 Control::Button(ConsoleButton::Start),
-                (w / 2 + pill.0 / 2 + 6, start_y),
+                (c_x - step, start_y),
                 pill_shape,
                 "START",
             );
             if six_button {
+                let mode_y = dpad_y - radius - m - pill.1 / 2;
                 push(
                     Control::Button(ConsoleButton::Mode),
-                    (w / 2 - pill.0 / 2 - 6, start_y),
+                    (dpad_center.0, mode_y),
                     pill_shape,
                     "MODE",
                 );
@@ -578,6 +586,29 @@ mod tests {
         t.pointer(3, Down, mx, my);
         t.pointer(3, Up, 100, 100);
         assert!(!t.take_menu_tap());
+    }
+
+    #[test]
+    fn landscape_start_and_mode_stay_off_the_picture() {
+        // A 19.5:9 phone held sideways. The face buttons may reach a little
+        // into the picture when the border is narrow, but Start and Mode
+        // are small and must never cover the game (they once sat at the
+        // bottom centre, over the score of many games).
+        for six in [false, true] {
+            let (w, h) = (844, 390);
+            let game = Rect::new((w - h * 10 / 7) / 2, 0, h * 10 / 7, h);
+            let l = Layout::new(w, h, game, six);
+            for b in &l.buttons {
+                let Shape::Pill { w: pill_w, .. } = b.shape else {
+                    continue;
+                };
+                let (x, _) = b.center;
+                assert!(
+                    x + pill_w / 2 <= game.x || x - pill_w / 2 >= game.right(),
+                    "{b:?} covers the picture (six buttons: {six})"
+                );
+            }
+        }
     }
 
     #[test]
