@@ -27,6 +27,8 @@ struct Case {
     presses: &'static [(u32, u32, Buttons)],
     /// FNV-1a hash of the visible frame after `frames` frames.
     expected: u64,
+    /// Run with 68000 address errors disabled (`Config::address_errors`).
+    lenient: bool,
 }
 
 const CASES: &[Case] = &[
@@ -35,14 +37,17 @@ const CASES: &[Case] = &[
         path: "240p-test-suite/240pSuite-1.23.bin",
         frames: 300,
         presses: &[],
+        lenient: false,
         expected: 0xead09c2ed0bcdcb4,
     },
     Case {
         name: "240p test suite PLUGE",
         path: "240p-test-suite/240pSuite-1.23.bin",
         frames: 400,
-        // Test Patterns -> first entry.
-        presses: &[(300, 305, Buttons::A), (330, 335, Buttons::A)],
+        // Test Patterns -> first entry. The second press waits for the
+        // pattern menu, which takes ~19 frames to load with the display on.
+        presses: &[(300, 305, Buttons::A), (345, 350, Buttons::A)],
+        lenient: false,
         expected: 0x92f08ddbca1d550a,
     },
     Case {
@@ -50,6 +55,7 @@ const CASES: &[Case] = &[
         path: "genmd-imgrom-testpattern/testpattern.bin",
         frames: 120,
         presses: &[],
+        lenient: false,
         expected: 0x1b56fe5fc7f7fa4a,
     },
     // Airstriker's compiler-generated code later writes a word to an odd
@@ -60,13 +66,27 @@ const CASES: &[Case] = &[
         path: "airstriker/Airstriker.md",
         frames: 60,
         presses: &[],
+        lenient: false,
         expected: 0x4d6a175bde9be241,
+    },
+    // With lenient address errors (as in emulators that ignore them) the
+    // game gets past the faulting write: title screen, then the main menu.
+    // (Its stray write lands on the stack base, so behaviour beyond this
+    // point depends on how an emulator mishandles it; not checked.)
+    Case {
+        name: "Airstriker main menu (lenient)",
+        path: "airstriker/Airstriker.md",
+        frames: 700,
+        presses: &[(620, 625, Buttons::START)],
+        lenient: true,
+        expected: 0xc51499d58d0a8563,
     },
     Case {
         name: "Right 2 Repair title",
         path: "right2repair-ggj2020/rom.bin",
         frames: 600,
         presses: &[],
+        lenient: false,
         expected: 0x45482c258a415507,
     },
     Case {
@@ -74,7 +94,8 @@ const CASES: &[Case] = &[
         path: "resistance-the-spiral/rom.bin",
         frames: 1200,
         presses: &[],
-        expected: 0xf03b69da9c72dc09,
+        lenient: false,
+        expected: 0xb268223d07378971,
     },
 ];
 
@@ -123,7 +144,11 @@ fn test_roms() {
         let path = dir.join(case.path);
         let data = std::fs::read(&path)
             .unwrap_or_else(|e| panic!("{}: {e} (run scripts/fetch-test-roms.sh)", path.display()));
-        let mut console = Genesis::new(Cartridge::from_bytes(&data).unwrap(), &Config::default());
+        let config = Config {
+            address_errors: !case.lenient,
+            ..Config::default()
+        };
+        let mut console = Genesis::new(Cartridge::from_bytes(&data).unwrap(), &config);
         for frame in 0..case.frames {
             let mut buttons = Buttons::default();
             for &(start, end, b) in case.presses {

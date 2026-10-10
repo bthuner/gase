@@ -119,8 +119,27 @@ impl Channel {
     /// | S3 → S4             | 0, 1, 2, 3, 4      | current sample    |
     /// | S1 → S4             | 2, 5               | current sample    |
     /// | S2 → S4             | 3                  | previous sample   |
+    ///
+    /// Fast path: a channel whose four operators are silent (see
+    /// `Operator::is_silent`) outputs 0 whatever its algorithm, so only the
+    /// oscillators and the pipeline move on. It must match the reference,
+    /// [`Channel::calc_operators`]; a unit test checks it does.
     #[inline]
     pub fn calc(&mut self, roms: &Roms, lfo_am: u16) -> i32 {
+        if self.ops.iter().all(Operator::is_silent) {
+            for op in &mut self.ops {
+                op.phase = (op.phase + op.inc) & 0xF_FFFF;
+            }
+            self.op1_out = [0, self.op1_out[0]];
+            self.s2_out = 0;
+            return 0;
+        }
+        self.calc_operators(roms, lfo_am)
+    }
+
+    /// The full computation of [`Channel::calc`], operator by operator.
+    #[inline]
+    pub(crate) fn calc_operators(&mut self, roms: &Roms, lfo_am: u16) -> i32 {
         let am = lfo_am >> AM_SHIFT[usize::from(self.ams)];
         let s1_prev = i32::from(self.op1_out[0]);
         let s2_prev = i32::from(self.s2_out);

@@ -235,6 +235,10 @@ pub struct Ym2612 {
 
     // --- host settings (not saved) -------------------------------------------
     ladder: bool,
+    /// Channels silenced by the host (bit 0 = channel 1), for listening to
+    /// channels one at a time. The channels still run; only the mix skips
+    /// them.
+    muted: u8,
 }
 
 gase_savestate::impl_state!(Ym2612 {
@@ -304,14 +308,31 @@ impl Ym2612 {
             dac_enabled: false,
             dac_data: 0x80,
             ladder: true,
+            muted: 0,
         }
     }
 
-    /// Reset the chip (the `/IC` pin). The ladder-effect setting is kept.
+    /// Reset the chip (the `/IC` pin). The ladder-effect and mute settings
+    /// are kept.
     pub fn reset(&mut self) {
-        let ladder = self.ladder;
+        let (ladder, muted) = (self.ladder, self.muted);
         *self = Self::new();
         self.ladder = ladder;
+        self.muted = muted;
+    }
+
+    /// Silence channels in the output mix: bit 0 mutes channel 1 ... bit 5
+    /// channel 6 (including the DAC). A host setting for learning and
+    /// debugging, not a chip feature: muted channels keep running and come
+    /// back exactly in step.
+    pub fn set_muted_channels(&mut self, mask: u8) {
+        self.muted = mask & 0x3F;
+    }
+
+    /// The mask set with [`Ym2612::set_muted_channels`].
+    #[must_use]
+    pub fn muted_channels(&self) -> u8 {
+        self.muted
     }
 
     /// Enable or disable emulation of the discrete YM2612's DAC distortion
@@ -500,6 +521,7 @@ impl Ym2612 {
             [(f[0], b[0]), (f[1], b[1]), (f[2], b[2])]
         });
         let (mut left, mut right) = (0i32, 0i32);
+        let mut mix = [(0i32, 0i32); 6];
         for (i, ch) in self.channels.iter_mut().enumerate() {
             ch.refresh_frequency(if i == 2 { special.as_ref() } else { None }, lfo_pm);
             for op in &mut ch.ops {
@@ -529,6 +551,17 @@ impl Ym2612 {
             };
             left += l;
             right += r;
+            mix[i] = (l, r);
+        }
+        if self.muted != 0 {
+            // Take the muted channels back out of the mix (rarely used, so
+            // this costs nothing in the normal case).
+            for (i, (l, r)) in mix.iter().enumerate() {
+                if self.muted & (1 << i) != 0 {
+                    left -= l;
+                    right -= r;
+                }
+            }
         }
 
         self.clock_lfo();

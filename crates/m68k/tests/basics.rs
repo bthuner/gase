@@ -251,6 +251,39 @@ fn address_error_and_double_fault() {
 }
 
 #[test]
+fn lenient_mode_ignores_bit_zero_of_data_accesses() {
+    // move.l d0,(a0) ; move.w (a0),d1 with A0 odd.
+    let code = [0x2080, 0x3210];
+
+    // Hardware behaviour: the long write faults (vector 3).
+    let (mut cpu, mut ram) = machine(&code);
+    cpu.a[0] = 0x4001;
+    cpu.d[0] = 0x1122_3344;
+    cpu.step(&mut ram); // the fault is taken within the same step
+    assert_eq!(cpu.pc(), 0x2030, "address error handler");
+    assert_eq!(ram.peek_long(0x4000), 0);
+
+    // Lenient: the accesses go to the even address below instead.
+    let (mut cpu, mut ram) = machine(&code);
+    cpu.set_address_errors(false);
+    assert!(!cpu.address_errors());
+    cpu.a[0] = 0x4001;
+    cpu.d[0] = 0x1122_3344;
+    assert_eq!(cpu.step(&mut ram), 12);
+    assert_eq!(ram.peek_long(0x4000), 0x1122_3344);
+    cpu.step(&mut ram);
+    assert_eq!(cpu.d[1] & 0xFFFF, 0x1122);
+    assert_eq!(cpu.pc(), CODE + 4);
+
+    // Odd jump targets still fault in lenient mode: jmp (a0).
+    let (mut cpu, mut ram) = machine(&[0x4ED0]);
+    cpu.set_address_errors(false);
+    cpu.a[0] = 0x4001;
+    cpu.step(&mut ram);
+    assert_eq!(cpu.pc(), 0x2030);
+}
+
+#[test]
 fn bcd_and_division_results() {
     // abcd d1,d0 ; divu d3,d2 ; divs d5,d4
     let (mut cpu, mut ram) = machine(&[0xC101, 0x84C3, 0x89C5]);

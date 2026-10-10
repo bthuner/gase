@@ -11,7 +11,7 @@ to be fast, compatible and pleasant to use.
 |---|---|
 | Pedagogy | One crate per chip, module docs that teach the hardware, comments that explain *why* |
 | Performance | Pre-decoded/static-dispatch CPU cores, scanline renderer, lazy audio catch-up |
-| Compatibility | CPU cores validated against ~2.6 million test vectors, SRAM, SSF2 mapper, 6-button pads, PAL/NTSC |
+| Compatibility | CPU cores validated against ~2.6 million test vectors, SRAM and serial EEPROM saves, SSF2 mapper, 6-button pads, PAL/NTSC |
 | Quality of life | Save states, rewind, fast-forward, screenshots, gamepads, dynamic audio rate control |
 | Best practices | `forbid(unsafe_code)`, clippy-clean, CI, one external dependency (SDL2, optional) |
 
@@ -43,11 +43,46 @@ Tab (hold)    Fast forward     Backspace     Rewind (hold)
 F5 / F8       Save / load state               F6 / F7    Previous / next slot
 F9            Reset            F11           Fullscreen
 F12           Screenshot       M             Mute
-Esc           Quit
+F1 or `       Debugger         Esc           Quit
 ```
 
+### The debugger
+
+F1 opens a second window showing the 68000 and Z80 registers and
+disassembly, the VDP registers (decoded), the palettes, every tile in VRAM
+(or plane A/B/window) and the sprite list. While it has the focus, its keys
+are:
+
+```text
+Space / P     Pause / continue          S             Step one 68000 instruction
+F / N         Run to the end of frame   V             Run to the next VBlank
+Up / Down     Move the cursor           PgDn / Home   Next page / back to PC
+B             Toggle breakpoint at cursor               C   Clear breakpoints
+G             Go to an address (type hex, Enter)
+T             Tiles / plane A / plane B / window        [ ]   Tile palette
+, .           Scroll the sprite list
+1-6           Mute FM channel 1-6       7 8 9 0       Mute PSG tone 1-3 / noise
+Esc / F1      Close the debugger
+```
+
+The same tools work without a window, which is handy for scripts and CI:
+
+```sh
+# Stop at $000200, print registers and disassembly, save the tiles and palettes
+gase --headless --break 200 --dump-vram vram.png --dump-cram cram.png game.bin
+gase --headless --frames 120 --dump-debugger debugger.png game.bin
+```
+
+`gase --debug game.bin` starts paused with the debugger open.
+
 Game controllers are detected automatically (first controller = player 1).
-Battery saves (`game.srm`), save states (`game.state0`..`9`) and screenshots
+
+gase emulates the 68000 exactly, including *address errors*: a word access
+at an odd address crashes the game, as on real hardware. A few homebrew
+programs contain such bugs and only work in emulators that ignore them; run
+those with `--no-address-errors`.
+
+Game saves (`game.srm`, battery SRAM or EEPROM), save states (`game.state0`..`9`) and screenshots
 are stored next to the ROM. Run `gase --help` for all options.
 
 ## Layout
@@ -76,6 +111,17 @@ scripts/fetch-m68k-tests.sh
 scripts/fetch-z80-tests.sh
 cargo test -p gase-m68k -p gase-z80 --profile fast-test -- --ignored
 ```
+
+## Benchmarks
+
+```sh
+scripts/fetch-test-roms.sh
+benchmarks/run.sh            # frames per second over the test ROMs (medians)
+benchmarks/callgrind.sh      # instruction counts, for profiling
+```
+
+See [`benchmarks/README.md`](benchmarks/README.md) for how to compare
+versions and read profiles, and `benchmarks/results/` for measurements.
 
 ## Contributing
 

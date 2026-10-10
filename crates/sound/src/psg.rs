@@ -82,6 +82,9 @@ pub struct Psg {
     /// Output flip-flops: three tones and the noise clock.
     flip_flops: [bool; 4],
     lfsr: u16,
+    /// Channels silenced by the host (bit 0 = tone 1 ... bit 3 = noise); not
+    /// part of the chip or the save state.
+    muted: u8,
 }
 
 gase_savestate::impl_state!(Psg {
@@ -112,12 +115,28 @@ impl Psg {
             counters: [0; 4],
             flip_flops: [false; 4],
             lfsr: LFSR_RESET,
+            muted: 0,
         }
     }
 
-    /// Reset to the power-on state.
+    /// Reset to the power-on state (the mute setting is kept).
     pub fn reset(&mut self) {
+        let muted = self.muted;
         *self = Self::new();
+        self.muted = muted;
+    }
+
+    /// Silence channels in [`Psg::output`]: bit 0 = tone 1, bit 1 = tone 2,
+    /// bit 2 = tone 3, bit 3 = noise. A host setting for learning and
+    /// debugging; the channels keep running.
+    pub fn set_muted_channels(&mut self, mask: u8) {
+        self.muted = mask & 0x0F;
+    }
+
+    /// The mask set with [`Psg::set_muted_channels`].
+    #[must_use]
+    pub fn muted_channels(&self) -> u8 {
+        self.muted
     }
 
     /// Write a byte to the PSG port.
@@ -170,20 +189,114 @@ impl Psg {
             self.flip_flops[3] = !self.flip_flops[3];
             // The LFSR shifts on the rising edge of the noise clock.
             if self.flip_flops[3] {
-                let feedback = if self.noise & 4 != 0 {
-                    (self.lfsr ^ (self.lfsr >> 3)) & 1
-                } else {
-                    self.lfsr & 1
-                };
-                self.lfsr = (self.lfsr >> 1) | (feedback << 15);
+                self.shift_lfsr();
             }
         }
+    }
+
+    /// One step of the noise LFSR.
+    #[inline]
+    fn shift_lfsr(&mut self) {
+        let feedback = if self.noise & 4 != 0 {
+            (self.lfsr ^ (self.lfsr >> 3)) & 1
+        } else {
+            self.lfsr & 1
+        };
+        self.lfsr = (self.lfsr >> 1) | (feedback << 15);
+    }
+
+    /// Run `ticks` counter ticks and return the sum of [`Psg::output`] after
+    /// each of them, which is what the mixer averages between two FM
+    /// samples.
+    ///
+    /// This is a fast path. Its reference, which it must match exactly (a
+    /// unit test checks it does), is the straightforward
+    /// `(0..ticks).map(|_| { psg.tick(); psg.output() }).sum()`.
+    ///
+    /// Instead of decrementing every counter on every tick, each channel
+    /// jumps from one reload of its counter to the next: between two
+    /// reloads its output is constant, so it contributes `level × ticks`.
+    /// A tone channel reloads only every `period` ticks (hundreds, for
+    /// audible notes), so this does a few steps per call instead of 4.2 × 4.
+    pub fn run(&mut self, ticks: u32) -> i64 {
+        if self.muted != 0 {
+            // Rarely used: keep the straightforward version.
+            return (0..ticks)
+                .map(|_| {
+                    self.tick();
+                    i64::from(self.output())
+                })
+                .sum();
+        }
+        let mut sum = 0;
+        for i in 0..3 {
+            let volume = i64::from(VOLUME[usize::from(self.attenuation[i])]);
+            // Periods 0/1 are ultrasonic: a constant high level (see `output`).
+            let ultrasonic = self.tone[i] <= 1;
+            let level = |high: bool| if ultrasonic || high { volume } else { -volume };
+            let reload = self.tone[i].max(1);
+            let mut left = ticks;
+            loop {
+                // The counter reaches 0 (and reloads) on tick number `due`;
+                // a counter already at 0 does so on the next tick.
+                let due = u32::from(self.counters[i].max(1));
+                if due > left {
+                    self.counters[i] -= left as u16;
+                    sum += level(self.flip_flops[i]) * i64::from(left);
+                    break;
+                }
+                if ultrasonic && due == 1 {
+                    // Period 0 or 1, counter at its reload: it reloads on
+                    // every tick from now on while the output stays high,
+                    // so all the remaining ticks can be done at once. (This
+                    // is how games play samples on the PSG.)
+                    sum += volume * i64::from(left);
+                    self.flip_flops[i] ^= left % 2 == 1;
+                    self.counters[i] = 1;
+                    break;
+                }
+                sum += level(self.flip_flops[i]) * i64::from(due - 1);
+                self.counters[i] = reload;
+                self.flip_flops[i] = !self.flip_flops[i];
+                sum += level(self.flip_flops[i]);
+                left -= due;
+            }
+        }
+        // The noise channel: the same jumps, the LFSR shifting on the rising
+        // edges of its flip-flop.
+        let volume = i64::from(VOLUME[usize::from(self.attenuation[3])]);
+        let level = |lfsr: u16| if lfsr & 1 != 0 { volume } else { -volume };
+        let reload = match self.noise & 3 {
+            3 => self.tone[2].max(1),
+            rate => 0x10 << rate,
+        };
+        let mut left = ticks;
+        loop {
+            let due = u32::from(self.counters[3].max(1));
+            if due > left {
+                self.counters[3] -= left as u16;
+                sum += level(self.lfsr) * i64::from(left);
+                break;
+            }
+            sum += level(self.lfsr) * i64::from(due - 1);
+            self.counters[3] = reload;
+            self.flip_flops[3] = !self.flip_flops[3];
+            if self.flip_flops[3] {
+                self.shift_lfsr();
+            }
+            sum += level(self.lfsr);
+            left -= due;
+        }
+        sum
     }
 
     /// Current mono output (sum of the four channels), on the same scale as
     /// one YM2612 channel: ±2048 per channel at full volume.
     #[must_use]
     pub fn output(&self) -> i32 {
+        if self.muted != 0 {
+            return self.output_muted();
+        }
         let mut sum = 0;
         for i in 0..3 {
             let volume = VOLUME[usize::from(self.attenuation[i])];
@@ -193,6 +306,27 @@ impl Psg {
         }
         let volume = VOLUME[usize::from(self.attenuation[3])];
         sum + if self.lfsr & 1 != 0 { volume } else { -volume }
+    }
+
+    /// [`Psg::output`] with some channels muted, kept out of line so the
+    /// normal path stays as fast as before.
+    #[cold]
+    #[inline(never)]
+    fn output_muted(&self) -> i32 {
+        let mut sum = 0;
+        for i in 0..4 {
+            if self.muted & (1 << i) != 0 {
+                continue;
+            }
+            let volume = VOLUME[usize::from(self.attenuation[i])];
+            let high = if i == 3 {
+                self.lfsr & 1 != 0
+            } else {
+                self.tone[i] <= 1 || self.flip_flops[i]
+            };
+            sum += if high { volume } else { -volume };
+        }
+        sum
     }
 }
 
@@ -339,5 +473,71 @@ mod tests {
             copy.tick();
             assert_eq!(psg.output(), copy.output());
         }
+    }
+
+    #[test]
+    fn run_matches_tick_by_tick() {
+        // `run` is a fast path; the reference is `tick()` then `output()`,
+        // tick by tick. Two identical chips, one driven each way, through
+        // random register settings: tone periods over the whole range with
+        // extra weight on the special 0 and 1, every noise mode (including
+        // "use tone 3"), all attenuations, and batches of random length so
+        // that every batch starts somewhere in the middle of a period.
+        let mut seed: u32 = 0x2545_F491;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut slow = Psg::new();
+        let mut fast = Psg::new();
+        for _ in 0..3000 {
+            let channel = (random() % 4) as u8;
+            let mut bytes = Vec::new();
+            match random() % 3 {
+                0 if channel < 3 => {
+                    let period = match random() % 4 {
+                        0 => random() % 2,
+                        1 => random() % 16,
+                        _ => random() % 0x400,
+                    } as u16;
+                    bytes.push(0x80 | channel << 5 | (period & 0xF) as u8);
+                    bytes.push((period >> 4) as u8 & 0x3F);
+                }
+                0 | 1 => bytes.push(0xE0 | (random() % 8) as u8),
+                _ => bytes.push(0x90 | channel << 5 | (random() % 16) as u8),
+            }
+            for byte in bytes {
+                slow.write(byte);
+                fast.write(byte);
+            }
+            let batch = random() % 40;
+            let expected: i64 = (0..batch)
+                .map(|_| {
+                    slow.tick();
+                    i64::from(slow.output())
+                })
+                .sum();
+            assert_eq!(fast.run(batch), expected);
+            assert_eq!(
+                (fast.counters, fast.flip_flops, fast.lfsr),
+                (slow.counters, slow.flip_flops, slow.lfsr)
+            );
+        }
+    }
+
+    #[test]
+    fn muted_channels_are_silent() {
+        let mut psg = Psg::new();
+        psg.write(0x90); // tone 1 full volume
+        let loud = psg.output();
+        psg.set_muted_channels(0x01);
+        // Tone 1 no longer contributes; the other (silent) channels remain.
+        assert_eq!(psg.output(), loud - 2048);
+        psg.set_muted_channels(0x0F);
+        assert_eq!(psg.output(), 0);
+        psg.reset();
+        assert_eq!(psg.muted_channels(), 0x0F);
     }
 }

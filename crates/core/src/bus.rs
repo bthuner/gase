@@ -4,7 +4,7 @@
 //!
 //! | range | contents |
 //! |-------|----------|
-//! | `000000-3FFFFF` | cartridge ROM (and SRAM) |
+//! | `000000-3FFFFF` | cartridge ROM (and SRAM, or EEPROM latches) |
 //! | `A00000-A0FFFF` | Z80 address space (RAM, YM2612), when the Z80 bus is requested |
 //! | `A10000-A1001F` | I/O: version register, controller ports |
 //! | `A11100`        | Z80 bus request |
@@ -65,6 +65,9 @@ pub struct Hardware {
     pub line_start: u64,
     /// Extra 68000 cycles to charge for the last access (e.g. Z80 bus waits).
     pub m68k_wait: u32,
+    /// Master clocks the 68000 spent waiting for the VDP during the last
+    /// instruction (write FIFO full, data-port read waiting for the FIFO).
+    pub vdp_stall: u32,
 }
 
 impl Hardware {
@@ -81,10 +84,24 @@ impl Hardware {
 
     // --- VDP ----------------------------------------------------------------
 
+    // The VDP is caught up lazily, like the sound chips: before a data or
+    // control port access it performs the queued writes and DMA steps whose
+    // access slots have come by now. If the access itself has to wait for a
+    // slot (FIFO full, or a read behind pending writes), the wait is charged
+    // to the CPU and the CPU's notion of "now" moves on accordingly.
+
     fn vdp_read_word(&mut self, addr: u32) -> u16 {
         match addr & 0x1F {
-            0x00..=0x03 => self.vdp.read_data(),
-            0x04..=0x07 => self.vdp.read_status(self.line_cycle()),
+            0x00..=0x03 => {
+                self.vdp.advance(self.line_cycle());
+                let value = self.vdp.read_data();
+                self.charge_vdp_stall();
+                value
+            }
+            0x04..=0x07 => {
+                self.vdp.advance(self.line_cycle());
+                self.vdp.read_status(self.line_cycle())
+            }
             0x08..=0x0F => self.vdp.hv_counter(self.line_cycle()),
             _ => 0xFFFF,
         }
@@ -92,11 +109,47 @@ impl Hardware {
 
     fn vdp_write_word(&mut self, addr: u32, value: u16) {
         match addr & 0x1F {
-            0x00..=0x03 => self.vdp.write_data(value),
-            0x04..=0x07 => self.vdp.write_control(value),
+            0x00..=0x03 => {
+                self.vdp.advance(self.line_cycle());
+                self.vdp.write_data(value);
+                self.charge_vdp_stall();
+            }
+            0x04..=0x07 => {
+                self.vdp.advance(self.line_cycle());
+                self.vdp.write_control(value);
+                if self.vdp.dma_68k_pending() {
+                    self.start_dma_68k();
+                }
+            }
             0x10..=0x17 => self.psg_write(value as u8),
             _ => {}
         }
+    }
+
+    fn charge_vdp_stall(&mut self) {
+        let stall = self.vdp.take_cpu_stall();
+        self.vdp_stall += stall;
+        self.now += u64::from(stall);
+    }
+
+    /// Give a newly requested 68000-to-VDP DMA its source data. The 68000
+    /// is frozen until the transfer is over (the scheduler sees
+    /// [`Vdp::dma_68k_active`]), so reading it all now is equivalent to the
+    /// VDP reading one word at a time.
+    pub(crate) fn start_dma_68k(&mut self) {
+        let Hardware { vdp, cart, ram, .. } = self;
+        vdp.fetch_dma_source(|addr| {
+            let addr = addr & 0xFF_FFFE;
+            if addr < 0x40_0000 {
+                cart.read_word(addr)
+            } else if addr >= 0xE0_0000 {
+                let i = (addr & 0xFFFF) as usize;
+                u16::from_be_bytes([ram[i], ram[i + 1]])
+            } else {
+                // DMA from other areas (e.g. Mega CD word RAM) is unsupported.
+                0
+            }
+        });
     }
 
     fn psg_write(&mut self, value: u8) {
@@ -132,7 +185,10 @@ impl Hardware {
             0x6000..=0x7EFF => 0xFF,
             0x7F00..=0x7F1F => {
                 // The VDP as seen by the Z80 (mostly used for the HV counter).
+                // Z80 waits are not modelled: drop any stall the read caused.
+                let (now, stall) = (self.now, self.vdp_stall);
                 let word = self.vdp_read_word(u32::from(addr));
+                (self.now, self.vdp_stall) = (now, stall);
                 if addr & 1 == 0 {
                     (word >> 8) as u8
                 } else {
@@ -257,6 +313,8 @@ impl Hardware {
     pub(crate) fn write_word_68k(&mut self, addr: u32, value: u16) {
         let addr = addr & 0xFF_FFFE;
         match addr {
+            // Cartridge: a word write may change two EEPROM lines at once.
+            0x00_0000..=0x3F_FFFF => self.cart.write_word(addr, value),
             0xC0_0000..=0xDF_FFFF => self.vdp_write_word(addr, value),
             0xE0_0000..=0xFF_FFFF => {
                 let i = (addr & 0xFFFF) as usize;
@@ -326,13 +384,22 @@ impl gase_m68k::Bus for Hardware {
 pub struct Z80Bus<'a>(pub &'a mut Hardware);
 
 impl gase_z80::Bus for Z80Bus<'_> {
+    // Sound RAM, where the Z80's program and most of its data live, is
+    // handled inline; the rest of the memory map out of line.
     #[inline]
     fn read(&mut self, addr: u16) -> u8 {
+        if addr < 0x4000 {
+            return self.0.zram[usize::from(addr & 0x1FFF)];
+        }
         self.0.z80_space_read(addr)
     }
 
     #[inline]
     fn write(&mut self, addr: u16, value: u8) {
+        if addr < 0x4000 {
+            self.0.zram[usize::from(addr & 0x1FFF)] = value;
+            return;
+        }
         self.0.z80_space_write(addr, value);
     }
 
