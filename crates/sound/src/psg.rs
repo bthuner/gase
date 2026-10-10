@@ -189,14 +189,91 @@ impl Psg {
             self.flip_flops[3] = !self.flip_flops[3];
             // The LFSR shifts on the rising edge of the noise clock.
             if self.flip_flops[3] {
-                let feedback = if self.noise & 4 != 0 {
-                    (self.lfsr ^ (self.lfsr >> 3)) & 1
-                } else {
-                    self.lfsr & 1
-                };
-                self.lfsr = (self.lfsr >> 1) | (feedback << 15);
+                self.shift_lfsr();
             }
         }
+    }
+
+    /// One step of the noise LFSR.
+    #[inline]
+    fn shift_lfsr(&mut self) {
+        let feedback = if self.noise & 4 != 0 {
+            (self.lfsr ^ (self.lfsr >> 3)) & 1
+        } else {
+            self.lfsr & 1
+        };
+        self.lfsr = (self.lfsr >> 1) | (feedback << 15);
+    }
+
+    /// Run `ticks` counter ticks and return the sum of [`Psg::output`] after
+    /// each of them: exactly `(0..ticks).map(|_| { psg.tick(); psg.output() })
+    /// .sum()`, which is what the mixer averages between two FM samples.
+    ///
+    /// Instead of decrementing every counter on every tick, each channel
+    /// jumps from one reload of its counter to the next: between two
+    /// reloads its output is constant, so it contributes `level × ticks`.
+    /// A tone channel reloads only every `period` ticks (hundreds, for
+    /// audible notes), so this does a few steps per call instead of 4.2 × 4.
+    pub fn run(&mut self, ticks: u32) -> i64 {
+        if self.muted != 0 {
+            // Rarely used: keep the straightforward version.
+            return (0..ticks)
+                .map(|_| {
+                    self.tick();
+                    i64::from(self.output())
+                })
+                .sum();
+        }
+        let mut sum = 0;
+        for i in 0..3 {
+            let volume = i64::from(VOLUME[usize::from(self.attenuation[i])]);
+            // Periods 0/1 are ultrasonic: a constant high level (see `output`).
+            let ultrasonic = self.tone[i] <= 1;
+            let level = |high: bool| if ultrasonic || high { volume } else { -volume };
+            let reload = self.tone[i].max(1);
+            let mut left = ticks;
+            loop {
+                // The counter reaches 0 (and reloads) on tick number `due`;
+                // a counter already at 0 does so on the next tick.
+                let due = u32::from(self.counters[i].max(1));
+                if due > left {
+                    self.counters[i] -= left as u16;
+                    sum += level(self.flip_flops[i]) * i64::from(left);
+                    break;
+                }
+                sum += level(self.flip_flops[i]) * i64::from(due - 1);
+                self.counters[i] = reload;
+                self.flip_flops[i] = !self.flip_flops[i];
+                sum += level(self.flip_flops[i]);
+                left -= due;
+            }
+        }
+        // The noise channel: the same jumps, the LFSR shifting on the rising
+        // edges of its flip-flop.
+        let volume = i64::from(VOLUME[usize::from(self.attenuation[3])]);
+        let level = |lfsr: u16| if lfsr & 1 != 0 { volume } else { -volume };
+        let reload = match self.noise & 3 {
+            3 => self.tone[2].max(1),
+            rate => 0x10 << rate,
+        };
+        let mut left = ticks;
+        loop {
+            let due = u32::from(self.counters[3].max(1));
+            if due > left {
+                self.counters[3] -= left as u16;
+                sum += level(self.lfsr) * i64::from(left);
+                break;
+            }
+            sum += level(self.lfsr) * i64::from(due - 1);
+            self.counters[3] = reload;
+            self.flip_flops[3] = !self.flip_flops[3];
+            if self.flip_flops[3] {
+                self.shift_lfsr();
+            }
+            sum += level(self.lfsr);
+            left -= due;
+        }
+        sum
     }
 
     /// Current mono output (sum of the four channels), on the same scale as
@@ -381,6 +458,46 @@ mod tests {
             psg.tick();
             copy.tick();
             assert_eq!(psg.output(), copy.output());
+        }
+    }
+
+    #[test]
+    fn run_matches_tick_by_tick() {
+        // Two identical chips, one ticked one step at a time, one in
+        // batches of varying sizes, through tone, noise and register
+        // changes (including the ultrasonic periods 0 and 1).
+        let mut slow = Psg::new();
+        let mut fast = Psg::new();
+        let writes: [&[u8]; 6] = [
+            &[
+                0x8E, 0x0F, 0x90, 0xA5, 0x02, 0xB3, 0xC1, 0x00, 0xD8, 0xE4, 0xF2,
+            ],
+            &[0xE7, 0xC9, 0x01],
+            &[0xA0, 0x00, 0xE1],
+            &[0x81, 0x00, 0xE6, 0xF0],
+            &[0xC0, 0x00, 0xE3, 0x9F],
+            &[0xE5],
+        ];
+        let mut batch = 1;
+        for bytes in writes {
+            for &byte in bytes {
+                slow.write(byte);
+                fast.write(byte);
+            }
+            for _ in 0..400 {
+                batch = batch % 13 + 1;
+                let expected: i64 = (0..batch)
+                    .map(|_| {
+                        slow.tick();
+                        i64::from(slow.output())
+                    })
+                    .sum();
+                assert_eq!(fast.run(batch), expected);
+                assert_eq!(
+                    (fast.counters, fast.flip_flops, fast.lfsr),
+                    (slow.counters, slow.flip_flops, slow.lfsr)
+                );
+            }
         }
     }
 

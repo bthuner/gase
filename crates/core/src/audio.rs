@@ -56,11 +56,14 @@ impl AudioClock {
     /// Run the chips until the master clock reaches `now`.
     pub fn run_until(&mut self, now: u64, ym: &mut Ym2612, psg: &mut Psg) {
         loop {
-            while self.psg_next <= now && self.psg_next <= self.ym_next {
-                psg.tick();
-                self.psg_sum += i64::from(psg.output());
-                self.psg_ticks += 1;
-                self.psg_next += PSG_TICK_PERIOD;
+            // The PSG ticks due up to now (or up to the next FM sample, if
+            // sooner), in one batch.
+            let limit = now.min(self.ym_next);
+            if self.psg_next <= limit {
+                let ticks = (limit - self.psg_next) / PSG_TICK_PERIOD + 1;
+                self.psg_sum += psg.run(ticks as u32);
+                self.psg_ticks += ticks as i64;
+                self.psg_next += ticks * PSG_TICK_PERIOD;
             }
             if self.ym_next > now {
                 break;
