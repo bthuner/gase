@@ -195,7 +195,11 @@ impl Instr {
 }
 
 /// The table of all 65 536 decoded opcodes, built once per process.
-pub(crate) struct DecodeTable(Box<[Instr]>);
+///
+/// A fixed-size array rather than a slice: indexed by a `u16` opcode it can
+/// never be out of bounds, so the lookup at every instruction needs no
+/// bounds check.
+pub(crate) struct DecodeTable(Box<[Instr; 0x1_0000]>);
 
 impl fmt::Debug for DecodeTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -207,7 +211,10 @@ impl DecodeTable {
     /// The shared table, built on first use.
     pub(crate) fn get() -> &'static DecodeTable {
         static TABLE: OnceLock<DecodeTable> = OnceLock::new();
-        TABLE.get_or_init(|| DecodeTable((0..=u16::MAX).map(decode).collect()))
+        TABLE.get_or_init(|| {
+            let table: Box<[Instr]> = (0..=u16::MAX).map(decode).collect();
+            DecodeTable(table.try_into().expect("one entry per opcode"))
+        })
     }
 
     #[inline]
