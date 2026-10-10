@@ -8,9 +8,7 @@ name: Mobile
 
 on:
   push:
-    # feature/mobile: so the branch that adds the apps is checked before its
-    # pull request exists; drop it once merged.
-    branches: [main, develop, feature/mobile]
+    branches: [main, develop]
   pull_request:
     paths:
       - mobile/**
