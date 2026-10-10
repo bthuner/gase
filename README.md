@@ -54,6 +54,10 @@ the releases do, let the `sdl2` crate compile the SDL source it ships
 cargo build --release -p gase --features sdl2/bundled,sdl2/static-link
 ```
 
+With CMake 4 or newer, set `CMAKE_POLICY_VERSION_MINIMUM=3.5` for that
+build: SDL 2's build files predate CMake 3.5, which CMake 4 otherwise
+refuses.
+
 Without SDL2, build the dependency-free headless runner:
 
 ```sh

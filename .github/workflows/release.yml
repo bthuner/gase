@@ -103,6 +103,10 @@ jobs:
       # Link SDL2 into the executable: sdl2-sys compiles the SDL source it
       # ships with CMake. Players then need nothing but the download.
       FEATURES: sdl2/bundled,sdl2/static-link
+      # SDL 2's CMakeLists.txt asks for CMake 3.0; CMake 4 (on the Windows
+      # and macOS runners) refuses anything older than 3.5 unless told that
+      # the newer policies are fine, which they are for SDL.
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
