@@ -29,7 +29,8 @@ OPTIONS (these override the settings for this run):
     --mobile              Run the phone app's shell in a window, as on Android
                           and iOS: touch first, files in the app's data folder
                           (~/.local/share/gase on Linux), no debugger; the
-                          window is --ui-size big (e.g. --ui-size 540x1170)
+                          window is --ui-size big (e.g. --ui-size 540x1170);
+                          with --dump-ui: the phone's menus
 
 HEADLESS (no window: tests, CI, benchmarks, recordings):
     --headless            Run without a window
