@@ -186,12 +186,11 @@ crates/
   gase/       the SDL2 shell around app/ (desktop and phones, a library) and
               the desktop binary, or headless
   mobile/     the native entry point of the Android and iOS apps (SDL_main)
+  web/        the browser shell: app/ as a WebAssembly module (gase-web)
 mobile/
   android/    the Android app: Gradle project, GaseActivity.java
   ios/        the iOS app: XcodeGen project, Objective-C app delegate
   README.md   building and installing the phone apps
-  gase/       the desktop binary: an SDL2 shell around app/, or headless
-  web/        the browser shell: app/ as a WebAssembly module (gase-web)
 web/          the page around it: plain HTML, CSS and JavaScript modules,
               audio worklet, service worker; build.sh builds the module
 docs/
