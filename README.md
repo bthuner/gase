@@ -57,6 +57,11 @@ cargo build --release -p gase --features sdl2/bundled,sdl2/static-link
 With CMake 4 or newer, set `CMAKE_POLICY_VERSION_MINIMUM=3.5` for that
 build: SDL 2's build files predate CMake 3.5, which CMake 4 otherwise
 refuses.
+On Windows, also set `RUSTFLAGS=-C link-arg=advapi32.lib`: SDL uses the
+registry, and `sdl2-sys` 0.37 does not link it when linking statically.
+On macOS, add clang's runtime library the same way:
+`RUSTFLAGS="-C link-arg=$(clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a"`
+(SDL's controller code needs `___isPlatformVersionAtLeast` from it).
 
 Without SDL2, build the dependency-free headless runner:
 
