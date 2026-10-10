@@ -6,11 +6,16 @@ points to the module whose documentation goes deeper.
 ## 1. The big picture
 
 ```text
-                      ┌───────────── gase (frontend) ─────────────┐
-   keyboard/pads ───► │ Session: ROM, .srm saves, states, rewind  │ ───► window, speakers
-                      └──────────────────┬────────────────────────┘
-                                         │ run_frame(), frame(), drain_audio()
-                      ┌──────────────────▼──────────────── gase-core ┐
+   keyboard, pads,   ┌──── shell: gase (SDL2 desktop) · web · Android · iOS ────┐
+   mouse, touch ───► │ window, sound device, files, input devices              │ ───► screen, speakers
+                     └───────────────┬────────────────────────────▲────────────┘
+                                     │ Event                      │ Platform trait,
+                     ┌───────────────▼──── gase-app ──────────────┴────────────┐  Video
+                     │ App: home, file browser, menus, settings, input mapping,  │
+                     │ touch controls, save states, rewind, pacing               │
+                     └───────────────┬───────────────────────────────────────────┘
+                                     │ run_frame(), frame(), drain_audio(), set_buttons()
+                      ┌──────────────▼───────────────────────────────── gase-core ┐
                       │ Genesis                                       │
                       │   ├─ M68k (gase-m68k)  ──┐                     │
                       │   ├─ Z80  (gase-z80)   ──┤ Bus traits          │
@@ -26,7 +31,9 @@ points to the module whose documentation goes deeper.
 The core is a library with no I/O: it takes ROM bytes and button states and
 returns pixels and audio samples. That keeps it testable (see
 `crates/core/tests/smoke.rs`, which runs hand-assembled programs) and
-portable to any frontend.
+portable to any frontend. The user interface is built the same way: a
+library without I/O (`gase-app`, section 10) that every platform's thin
+shell drives.
 
 ## 2. The CPUs and their buses
 
@@ -179,7 +186,8 @@ and continue later, while `Genesis::run_frame` itself never looks at
 breakpoints. Memory is inspected with `Genesis::peek_*`, which never touch
 I/O registers (reading those has side effects). The windows are drawn into
 plain pixel buffers with a public-domain 8×8 font
-(`crates/gase/src/debugger/`), so the same views can be saved as PNG from
+(`crates/app/src/font.rs`, shared with the menus; the views are in
+`crates/gase/src/debugger/`), so the same views can be saved as PNG from
 the headless runner (`--dump-vram`, `--dump-cram`, `--dump-debugger`,
 `--break`).
 
@@ -221,6 +229,73 @@ works; read the fast path to learn how to make it quick. On top of that,
 every optimisation must leave the test-ROM frame hashes, the WAV output
 and the CPU test vectors bit-identical.
 
+## 10. The user interface and the platform contract
+
+An emulator frontend has to do the same things on every platform: show a
+picture, play sound, read buttons, open files, offer menus. Only the
+*how* differs. gase splits the two:
+
+* **`gase-app`** (`crates/app`) decides *what* happens: the home screen,
+  the file browser, the pause menu, save states, settings, how a key or a
+  finger becomes a console button, how fast to run. It has no
+  dependencies and no I/O, like the core.
+* A **shell** per platform does the *how*: `crates/gase/src/sdl.rs` (with
+  `desktop.rs` for files) on desktop; a web shell (JavaScript + WASM), and
+  Android/iOS shells (SDL2) can follow the same pattern.
+
+The contract between them is the `Platform` trait plus three flows
+(`crates/app/src/platform.rs` documents it with a diagram):
+
+```rust
+pub trait Platform {
+    fn now_ms(&self) -> u64;
+    fn log(&mut self, message: &str) {}
+    fn load(&mut self, file: FileKey<'_>) -> Option<Vec<u8>>;
+    fn store(&mut self, file: FileKey<'_>, data: &[u8]) -> Result<String, String>;
+    fn read_rom(&mut self, path: &str) -> Result<Vec<u8>, String>;
+    fn list_dir(&mut self, dir: Option<&str>) -> Result<Listing, String> { /* unsupported */ }
+    fn audio_queued(&self) -> Option<usize> { None }
+    fn queue_audio(&mut self, samples: &[i16]) {}
+    fn request(&mut self, request: Request) {}
+}
+```
+
+* **Events flow in**: the shell translates its system's input into
+  `Event`s (physical keys, standard-layout gamepad buttons, pointers with
+  ids for multi-touch, resizes with the display density, dropped files).
+* **Audio is pushed** to `queue_audio` as it is produced; the app reads
+  `audio_queued` to fine-tune the audio speed (section 5).
+* **Video is pulled**: `App::video()` returns the game frame with the
+  rectangle to draw it in, and an *overlay* with alpha for menus, touch
+  controls and messages. The overlay is drawn small (one font pixel = one
+  overlay pixel) and enlarged by a whole factor by the GPU, so it costs
+  a few hundred thousand pixels at most, and only while something is
+  shown: while playing with a keyboard or pad there is no overlay at all.
+* **Storage** says *what*, not *where*: `FileKey::State { rom, slot }`
+  becomes `game.state3` next to the ROM on desktop, a browser storage key
+  on the web.
+* **Slow or optional things are requests answered later**: the web's
+  file picker answers with an `Event::RomData` whenever the user is done.
+  `Capabilities` tell the app what the platform can do, so it only offers
+  what works (no "Quit" on the web, a native picker instead of the
+  built-in browser on phones).
+
+Inside the app, three ideas are worth reading about in the code:
+
+* **Immediate-mode UI** (`crates/app/src/ui.rs`): each screen is a function
+  that draws itself and returns what was chosen, every frame. Only the
+  focus and scroll position persist. Focus moves by *spatial navigation*
+  (to the nearest item in the pressed direction), so lists and grids work
+  with a d-pad without special code.
+* **Software rendering** with the 8×8 font (`canvas.rs`, `font.rs`): one
+  pixel buffer works everywhere and can be tested; `gase --headless
+  --dump-ui` saves the interface as PNG.
+* **Input mapping** (`input.rs`, `touch.rs`): bindings per player for keys
+  and pad buttons; the on-screen d-pad picks one of eight sectors by
+  comparing the finger's offsets with tan 22.5°, and every finger is
+  tracked separately, so the console buttons are simply the union of what
+  each one presses.
+
 ## Where to start reading
 
 1. `crates/core/src/system.rs` — the main loop.
@@ -228,3 +303,5 @@ and the CPU test vectors bit-identical.
 3. `crates/vdp/src/lib.rs` — what the VDP is.
 4. `crates/m68k/src/lib.rs` and `crates/z80/src/lib.rs` — the CPUs.
 5. `crates/sound/src/lib.rs` — FM synthesis.
+6. `crates/app/src/lib.rs` — the user interface, and `platform.rs` for
+   how it reaches any platform.
