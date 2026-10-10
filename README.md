@@ -75,6 +75,10 @@ gase --headless --frames 120 --dump-debugger debugger.png game.bin
 
 `gase --debug game.bin` starts paused with the debugger open.
 
+ROMs can be plain images (`.bin`, `.md`, `.gen`), interleaved `.smd`
+dumps, or either of them zipped: `gase game.zip` finds the ROM inside the
+archive (gase reads ZIP files itself, with no extra library).
+
 Game controllers are detected automatically (first controller = player 1).
 
 gase emulates the 68000 exactly, including *address errors*: a word access
@@ -83,7 +87,7 @@ programs contain such bugs and only work in emulators that ignore them; run
 those with `--no-address-errors`.
 
 Game saves (`game.srm`, battery SRAM or EEPROM), save states (`game.state0`..`9`) and screenshots
-are stored next to the ROM. Run `gase --help` for all options.
+are stored next to the ROM, named after it (`game.zip` also saves to `game.srm`). Run `gase --help` for all options.
 
 ## Layout
 
@@ -94,6 +98,7 @@ crates/
   z80/        Zilog Z80 (sound CPU)
   vdp/        315-5313 video display processor
   sound/      YM2612 FM synthesiser, SN76489 PSG, resampler
+  zip/        ZIP archives and DEFLATE decompression, for zipped ROMs
   core/       the console: memory maps, cartridge, controllers, scheduler
   gase/       the frontend binary (SDL2 window or headless)
 docs/

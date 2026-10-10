@@ -28,6 +28,20 @@ returns pixels and audio samples. That keeps it testable (see
 `crates/core/tests/smoke.rs`, which runs hand-assembled programs) and
 portable to any frontend.
 
+### Loading ROMs and archives
+
+`Cartridge::from_bytes` (`crates/core/src/cartridge.rs`) is the single
+entry point for ROM bytes, so every frontend gets the same formats: plain
+images (`.bin`, `.md`, `.gen`), interleaved `.smd` dumps (deinterleaved on
+load), and either of them inside a `.zip` archive. A zip file is
+recognised by its first bytes (`PK\3\4`), the ROM inside is picked by
+its extension (the largest `.md`/`.bin`/`.gen`/`.smd`/`.68k`/`.sgd` file)
+and extracted, with its CRC-32 checked, by `crates/zip`, a dependency-free
+ZIP reader and DEFLATE decoder whose module docs explain both formats:
+LZ77 back-references, canonical Huffman codes and how a compressed block
+describes its own codes. Frontends name save files after the file they
+opened, so `game.zip` saves to `game.srm` like `game.bin` does.
+
 ## 2. The CPUs and their buses
 
 Each CPU crate defines a small `Bus` trait describing what the CPU needs
@@ -228,3 +242,4 @@ and the CPU test vectors bit-identical.
 3. `crates/vdp/src/lib.rs` — what the VDP is.
 4. `crates/m68k/src/lib.rs` and `crates/z80/src/lib.rs` — the CPUs.
 5. `crates/sound/src/lib.rs` — FM synthesis.
+6. `crates/zip/src/inflate.rs` — DEFLATE, for a break from hardware.
