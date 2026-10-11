@@ -127,6 +127,11 @@ pub enum Request {
     Recompile(String),
 }
 
+/// The pause-menu entry where the studio runs on the same computer.
+pub const RECOMPILE_ON_DESKTOP: &str = "Recompile to native…";
+/// The pause-menu entry on a phone, which asks a studio on the network.
+pub const RECOMPILE_ON_PHONE: &str = "Make an app of this game…";
+
 /// What a platform can do, so the app only offers what works.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capabilities {
@@ -149,8 +154,11 @@ pub struct Capabilities {
     pub debugger: bool,
     /// A keyboard is likely present (show keyboard hints).
     pub keyboard: bool,
-    /// [`Request::Recompile`] works: gase-recomp's studio is installed.
+    /// [`Request::Recompile`] works: gase-recomp's studio is installed
+    /// (desktop), or a phone can ask one on the network for an app.
     pub recompile: bool,
+    /// The pause-menu entry that sends that request.
+    pub recompile_label: &'static str,
 }
 
 impl Default for Capabilities {
@@ -167,6 +175,7 @@ impl Default for Capabilities {
             debugger: false,
             keyboard: true,
             recompile: false,
+            recompile_label: RECOMPILE_ON_DESKTOP,
         }
     }
 }

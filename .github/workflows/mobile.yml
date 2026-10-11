@@ -105,6 +105,12 @@ jobs:
           unzip -o -q "$apk" lib/arm64-v8a/libmain.so -d /tmp/apk
           nm="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           "$nm" -D --defined-only /tmp/apk/lib/arm64-v8a/libmain.so | grep -w SDL_main
+          # gase's own app asks for no network or install permission (only an
+          # app built with -PgasePhoneBuilds does).
+          if "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions "$apk" \
+              | grep -E 'INTERNET|REQUEST_INSTALL_PACKAGES'; then
+            echo "unexpected permission"; exit 1
+          fi
           # 16 KB page alignment (Android 15+ devices).
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$apk" | tail -n 3
       - uses: actions/upload-artifact@v4

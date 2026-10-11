@@ -80,6 +80,10 @@ mod android {
     /// (`SDLActivity.COMMAND_USER`); keep it equal to
     /// `GaseActivity.COMMAND_PICK_ROM`.
     const COMMAND_PICK_ROM: u32 = 0x8000 + 1;
+    /// The message `GaseActivity` answers by installing
+    /// `files/builds/app.apk`; keep it equal to
+    /// `GaseActivity.COMMAND_INSTALL_APK`.
+    const COMMAND_INSTALL_APK: u32 = 0x8000 + 2;
 
     // SAFETY: these are the signatures declared in SDL2's `SDL_system.h`
     // (available on Android since SDL 2.0.9 and 2.0.22), and `libSDL2.so`,
@@ -101,6 +105,10 @@ mod android {
 
     pub fn back() {
         SDL_AndroidBackButton();
+    }
+
+    pub fn install_apk() -> bool {
+        SDL_AndroidSendMessage(COMMAND_INSTALL_APK, 0) == 0
     }
 }
 
@@ -134,3 +142,9 @@ pub const PICK_ROM: Option<fn()> = None;
 pub const BACK_AT_HOME: Option<fn()> = Some(android::back);
 #[cfg(not(target_os = "android"))]
 pub const BACK_AT_HOME: Option<fn()> = None;
+
+/// Hand `files/builds/app.apk` to the system's package installer.
+#[cfg(target_os = "android")]
+pub const INSTALL_APK: Option<fn() -> bool> = Some(android::install_apk);
+#[cfg(not(target_os = "android"))]
+pub const INSTALL_APK: Option<fn() -> bool> = None;

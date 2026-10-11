@@ -26,6 +26,15 @@ All notable changes to gase are listed here. The format follows
   debugger keep working. A recompiled game registers its code for its
   ROM's CRC-32 and calls `gase::run_command_line`: every frontend then runs
   it like any other game.
+- **Make an app of this game…** on phones, for apps that bring a way to
+  build one: `gase_mobile::run_with` takes `Hooks { recompile }`, and
+  `gase::sdl::Notices` carries toasts from any thread.
+  `gase_mobile::install_apk` hands an APK to Android's package installer
+  (`GaseActivity` grows a `PackageInstaller` session); apps built with
+  `-PgasePhoneBuilds` ask for the `INTERNET` and
+  `REQUEST_INSTALL_PACKAGES` permissions, gase's own app still asks for
+  none. `ExternalCpu::ahead_of_time` tells a JIT from a recompiled game, so
+  a game run by a JIT can still be recompiled.
 - **Recompiled games on phones**: `gase-mobile` gets an `sdl-main` feature
   (on by default) and `run_game`, so a game crate can export its own
   `SDL_main`, register its code and ship its ROM inside the app. The

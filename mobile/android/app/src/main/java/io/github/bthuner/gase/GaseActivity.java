@@ -1,7 +1,9 @@
 package io.github.bthuner.gase;
 
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
@@ -11,6 +13,7 @@ import android.util.Log;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -57,12 +60,30 @@ import org.libsdl.app.SDLActivity;
  *       an event would be lost; {@link #getArguments} imports the ROM on
  *       SDL's thread and passes its path as {@code argv[1]} instead.</li>
  * </ul>
+ *
+ * <h2>Installing an app (phone builds)</h2>
+ *
+ * gase-recomp's phone app can have a computer on the network turn a game
+ * into an app of its own, and receives the APK. Rust writes it to
+ * {@code files/builds/app.apk} and sends {@code COMMAND_INSTALL_APK};
+ * {@link #installApk} hands it to the system's {@link PackageInstaller},
+ * which asks the user to confirm (and, the first time, to allow this app
+ * to install apps: the {@code REQUEST_INSTALL_PACKAGES} permission, which
+ * only that app's manifest asks for, see build.gradle's
+ * {@code gasePhoneBuilds}). The installer reports back with an intent to
+ * this activity, {@link #onNewIntent}.
  */
 public class GaseActivity extends SDLActivity {
     private static final String TAG = "gase";
 
     /** Must match COMMAND_PICK_ROM in crates/mobile/src/native.rs. */
     static final int COMMAND_PICK_ROM = COMMAND_USER + 1;
+    /** Must match COMMAND_INSTALL_APK in crates/mobile/src/native.rs. */
+    static final int COMMAND_INSTALL_APK = COMMAND_USER + 2;
+
+    /** How the package installer reports back to this activity. */
+    private static final String ACTION_INSTALL_STATUS =
+            "io.github.bthuner.gase.INSTALL_STATUS";
 
     private static final int REQUEST_PICK_ROM = 1;
 
@@ -102,6 +123,10 @@ public class GaseActivity extends SDLActivity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (ACTION_INSTALL_STATUS.equals(intent.getAction())) {
+            installStatus(intent);
+            return;
+        }
         Uri uri = romUri(intent);
         if (uri != null) {
             importInBackground(uri);
@@ -113,6 +138,10 @@ public class GaseActivity extends SDLActivity {
     protected boolean onUnhandledMessage(int command, Object param) {
         if (command == COMMAND_PICK_ROM) {
             pickRom();
+            return true;
+        }
+        if (command == COMMAND_INSTALL_APK) {
+            installApk();
             return true;
         }
         return super.onUnhandledMessage(command, param);
@@ -257,6 +286,79 @@ public class GaseActivity extends SDLActivity {
             clean = clean.substring(clean.length() - 120);
         }
         return clean.isEmpty() ? "game.bin" : clean;
+    }
+
+    /**
+     * Hand files/builds/app.apk to the package installer: open a session,
+     * copy the APK into it, and commit it. Copying is on a background
+     * thread; committing only asks, the installer then shows its window.
+     */
+    private void installApk() {
+        final File apk = new File(new File(getFilesDir(), "builds"), "app.apk");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                PackageInstaller installer = getPackageManager().getPackageInstaller();
+                PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                        PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                try {
+                    int id = installer.createSession(params);
+                    try (PackageInstaller.Session session = installer.openSession(id)) {
+                        try (InputStream in = new FileInputStream(apk);
+                             OutputStream out = session.openWrite("app.apk", 0, apk.length())) {
+                            byte[] buffer = new byte[64 * 1024];
+                            int n;
+                            while ((n = in.read(buffer)) > 0) {
+                                out.write(buffer, 0, n);
+                            }
+                            session.fsync(out);
+                        }
+                        Intent status = new Intent(ACTION_INSTALL_STATUS)
+                                .setClass(GaseActivity.this, GaseActivity.class);
+                        // The installer adds its answer to the intent: from
+                        // Android 12 on, that needs a mutable PendingIntent.
+                        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                        if (Build.VERSION.SDK_INT >= 31) {
+                            flags |= PendingIntent.FLAG_MUTABLE;
+                        }
+                        PendingIntent pending = PendingIntent.getActivity(
+                                GaseActivity.this, id, status, flags);
+                        session.commit(pending.getIntentSender());
+                    }
+                } catch (IOException | RuntimeException e) {
+                    Log.e(TAG, "Cannot install " + apk, e);
+                    showError("Cannot install the app: " + e.getMessage());
+                }
+            }
+        }, "gase-install").start();
+    }
+
+    /** The package installer's answer to {@link #installApk}. */
+    @SuppressWarnings("deprecation") // getParcelableExtra(String), needed before Android 13
+    private void installStatus(Intent intent) {
+        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS,
+                PackageInstaller.STATUS_FAILURE);
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            // The user must confirm: show the installer's own window.
+            Object confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirm instanceof Intent) {
+                try {
+                    startActivity((Intent) confirm);
+                } catch (ActivityNotFoundException e) {
+                    showError("This device cannot install apps");
+                }
+            }
+        } else if (status == PackageInstaller.STATUS_SUCCESS) {
+            showError("App installed: find it with your other apps");
+        } else {
+            String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            if (status == PackageInstaller.STATUS_FAILURE_CONFLICT) {
+                // Same app id, other signing key: built on another computer.
+                message = "an app with this name, built elsewhere, is installed: "
+                        + "uninstall it first";
+            }
+            showError("The app was not installed: " + message);
+        }
     }
 
     private void showError(final String message) {

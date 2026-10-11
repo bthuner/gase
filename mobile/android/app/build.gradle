@@ -44,6 +44,15 @@ android {
         }
     }
 
+    // An app that installs the apps it has built (gase-recomp's phone
+    // builds, -PgasePhoneBuilds) asks for two permissions gase's own app
+    // does without: src/phoneBuilds/AndroidManifest.xml, merged over the
+    // main manifest.
+    if (project.hasProperty('gasePhoneBuilds')) {
+        sourceSets.debug.manifest.srcFile 'src/phoneBuilds/AndroidManifest.xml'
+        sourceSets.release.manifest.srcFile 'src/phoneBuilds/AndroidManifest.xml'
+    }
+
     buildTypes {
         release {
             minifyEnabled false

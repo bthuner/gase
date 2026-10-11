@@ -60,7 +60,19 @@ pub use native::args;
 
 use std::path::PathBuf;
 
+pub use gase::sdl::Notices;
 use gase::sdl::{Mobile, Shell, run_sdl};
+
+/// What an app built on this crate adds to gase (all off in gase's own
+/// app).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Hooks {
+    /// Offer "Make an app of this game…" in the pause menu, and do it:
+    /// see [`gase::sdl::Mobile::recompile`]. gase-recomp's phone app
+    /// asks a studio on the network to build the app, then hands it to
+    /// [`install_apk`].
+    pub recompile: Option<fn(rom: String, notices: Notices)>,
+}
 
 /// The ROM to open at start, from `SDL_main`'s arguments.
 ///
@@ -78,7 +90,42 @@ fn rom_argument(args: &[String]) -> Option<String> {
 /// Run the app (called by `SDL_main`); returns the process's exit status.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
-    run_opening(rom_argument(args))
+    run_with(args, Hooks::default())
+}
+
+/// Run the app with some [`Hooks`] (called by an app's own `SDL_main`).
+#[must_use]
+pub fn run_with(args: &[String], hooks: Hooks) -> i32 {
+    run_opening(rom_argument(args), hooks)
+}
+
+/// Offer `apk` to Android's package installer, which asks the user to
+/// confirm (and, the first time, to allow this app to install apps).
+/// Returns once the request is sent; the installer's window follows.
+///
+/// The APK is written to `<app folder>/builds/app.apk`, where
+/// `GaseActivity.java` reads it. Any thread may call this.
+///
+/// # Errors
+///
+/// When the file cannot be written, or on a system other than Android
+/// (iOS only installs apps from its store).
+pub fn install_apk(apk: &[u8]) -> Result<(), String> {
+    let Some(install) = native::INSTALL_APK else {
+        return Err("only Android installs apps this way".into());
+    };
+    let data = sdl2::filesystem::pref_path("", "gase").map_err(|e| e.to_string())?;
+    let dir = PathBuf::from(data).join("builds");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("app.apk");
+    let part = path.with_extension("part");
+    std::fs::write(&part, apk).map_err(|e| e.to_string())?;
+    std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
+    if install() {
+        Ok(())
+    } else {
+        Err("cannot reach the activity to install the app".into())
+    }
 }
 
 /// Run a game shipped inside the app: a statically recompiled game, which
@@ -105,7 +152,7 @@ pub fn run_game(args: &[String], name: &str, rom: &[u8]) -> i32 {
             None
         }
     });
-    run_opening(open)
+    run_opening(open, Hooks::default())
 }
 
 /// Copy `rom` to `<app folder>/roms/<name>.bin`, unless the same is there.
@@ -145,7 +192,7 @@ fn file_name(title: &str) -> String {
     }
 }
 
-fn run_opening(open: Option<String>) -> i32 {
+fn run_opening(open: Option<String>, hooks: Hooks) -> i32 {
     // A panic message on stderr is lost on a phone; send it to the system
     // log (`adb logcat`, Xcode's console) where it can be found.
     std::panic::set_hook(Box::new(|info| {
@@ -156,6 +203,7 @@ fn run_opening(open: Option<String>) -> i32 {
         pick_rom: native::PICK_ROM,
         back_at_home: native::BACK_AT_HOME,
         window: None,
+        recompile: hooks.recompile,
     };
     match run_sdl(Shell::Mobile(mobile)) {
         Ok(()) => 0,
@@ -203,6 +251,7 @@ mod tests {
         if cfg!(not(any(target_os = "android", target_os = "ios"))) {
             assert!(native::PICK_ROM.is_none());
             assert!(native::BACK_AT_HOME.is_none());
+            assert!(install_apk(b"PK").is_err(), "no installer to hand it to");
         }
     }
 }
