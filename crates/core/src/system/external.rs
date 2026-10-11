@@ -60,6 +60,8 @@ impl Clone for Box<dyn ExternalCpu> {
 pub type Factory = fn() -> Box<dyn ExternalCpu>;
 
 static REGISTRY: Mutex<Vec<(u32, Factory)>> = Mutex::new(Vec::new());
+/// The CPU for every other ROM (a JIT), if any.
+static FOR_ANY_ROM: Mutex<Option<Factory>> = Mutex::new(None);
 
 /// Run `factory`'s CPU for every console created for the ROM whose CRC-32
 /// (the zip/PNG one, over the flat ROM image) is `rom_crc32`.
@@ -71,16 +73,34 @@ pub fn register(rom_crc32: u32, factory: Factory) {
     list.push((rom_crc32, factory));
 }
 
-/// The CPU registered for a ROM, if any.
-pub(crate) fn registered(rom: &[u8]) -> Option<Box<dyn ExternalCpu>> {
-    let list = REGISTRY
+/// Run `factory`'s CPU for every ROM that has no CPU of its own (see
+/// [`register`]): a JIT, which compiles any game's code as it runs.
+/// `None` goes back to the interpreter.
+pub fn register_any(factory: Option<Factory>) {
+    *FOR_ANY_ROM
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if list.is_empty() {
-        return None;
-    }
-    let crc = gase_zip::crc32::crc32(rom);
-    list.iter().find(|(c, _)| *c == crc).map(|(_, make)| make())
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = factory;
+}
+
+/// The CPU registered for a ROM, if any: its own, else the one for any ROM.
+pub(crate) fn registered(rom: &[u8]) -> Option<Box<dyn ExternalCpu>> {
+    let own = {
+        let list = REGISTRY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if list.is_empty() {
+            None
+        } else {
+            let crc = gase_zip::crc32::crc32(rom);
+            list.iter().find(|(c, _)| *c == crc).map(|(_, make)| make())
+        }
+    };
+    own.or_else(|| {
+        FOR_ANY_ROM
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map(|make| make())
+    })
 }
 
 /// Which scanline event comes next.
