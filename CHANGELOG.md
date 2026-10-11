@@ -7,6 +7,11 @@ All notable changes to gase are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Recompile to native…** in the pause menu, on desktops where
+  gase-recomp's studio is installed (`gase-recomp-studio` on the `PATH`,
+  or `GASE_RECOMP_STUDIO`): it opens the studio set to build the game for
+  this computer. `Capabilities::recompile` and `Request::Recompile` carry
+  it; phones and the browser never offer it.
 - `external::register_any`: one external CPU for every ROM that has none
   of its own, such as gase-recomp's JIT. A ROM's own CPU (a statically
   recompiled game) still wins. The Android and iOS build scripts build the
