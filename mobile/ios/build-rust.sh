@@ -39,7 +39,7 @@ for arch in $archs; do
         *) echo "error: no Rust target for $platform/$arch" >&2; exit 1 ;;
     esac
     cargo rustc --manifest-path "$manifest" -p "$package" \
-        --profile "$profile" --target "$triple" --crate-type staticlib
+        --profile "$profile" --target "$triple" --lib --crate-type staticlib
     libs="$libs $target_dir/$triple/$profile/$lib"
 done
 mkdir -p "$build/ios/$platform"
