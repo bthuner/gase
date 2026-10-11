@@ -83,12 +83,14 @@ for abi in $abis; do
     # 2. The Rust library, as a C dynamic library named the way SDL's Java
     #    side looks for it (SDLActivity.getLibraries(): "SDL2", "main").
     #    Cargo reads CARGO_TARGET_<TRIPLE>_LINKER and _RUSTFLAGS for the
-    #    target only, so the host build scripts are unaffected.
+    #    target only, so the host build scripts are unaffected. `--lib`:
+    #    a game crate may also have programs (gase-recomp's "gase JIT"
+    #    has a desktop one), and `--crate-type` applies to one target.
     var=$(echo "$triple" | tr 'a-z-' 'A-Z_')
     env "CARGO_TARGET_${var}_LINKER=$toolchain/$clang$api-clang" \
         "CARGO_TARGET_${var}_RUSTFLAGS=-L native=$sdl_build -C link-arg=-Wl,-z,max-page-size=16384" \
         cargo rustc --manifest-path "$manifest" -p "$package" \
-        --profile "$profile" --target "$triple" --crate-type cdylib >&2
+        --profile "$profile" --target "$triple" --lib --crate-type cdylib >&2
     dir=$profile
     [ "$profile" = dev ] && dir=debug
     cp "$target_dir/$triple/$dir/$lib" "$out/$abi/libmain.so"
