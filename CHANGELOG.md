@@ -7,6 +7,11 @@ All notable changes to gase are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Recompile to native…** in the pause menu, on desktops where
+  gase-recomp's studio is installed (`gase-recomp-studio` on the `PATH`,
+  or `GASE_RECOMP_STUDIO`): it opens the studio set to build the game for
+  this computer. `Capabilities::recompile` and `Request::Recompile` carry
+  it; phones and the browser never offer it.
 - **Statically recompiled games** (`gase_core::system::external`): a
   console can be driven by an external 68000, such as a game recompiled to
   native code by [gase-recomp](https://github.com/bthuner/gase-recomp).

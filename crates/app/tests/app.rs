@@ -769,3 +769,28 @@ fn suspend_writes_the_save_and_settings_and_pauses() {
     assert!(fake.files.contains_key("settings"), "settings written");
     assert_eq!(app.screen_name(), "pause", "the game waits in its menu");
 }
+
+#[test]
+fn recompile_is_offered_when_the_studio_is_installed() {
+    // Without the studio: the pause menu is unchanged.
+    let (mut fake, mut app) = setup(caps());
+    open_game(&mut app, &mut fake);
+    press(&mut app, &mut fake, Key::Escape);
+    assert!(app.item_rect(5).is_some() && app.item_rect(6).is_none());
+
+    // With it: "Recompile to native…" before "Close game", and choosing it
+    // hands the ROM's path to the platform.
+    let caps = Capabilities {
+        recompile: true,
+        ..caps()
+    };
+    let (mut fake, mut app) = setup(caps);
+    open_game(&mut app, &mut fake);
+    press(&mut app, &mut fake, Key::Escape);
+    assert!(app.item_rect(6).is_some(), "one more entry");
+    tap(&mut app, &mut fake, 5, PointerKind::Mouse);
+    assert_eq!(
+        fake.requests.last(),
+        Some(&Request::Recompile("/roms/game.bin".into()))
+    );
+}

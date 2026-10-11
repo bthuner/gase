@@ -63,6 +63,8 @@ pub fn phone_capabilities(sample_rate: u32) -> Capabilities {
         fullscreen: false,
         debugger: false,
         keyboard: false,
+        // No compiler on a phone (see gase-recomp's making-of).
+        recompile: false,
     }
 }
 

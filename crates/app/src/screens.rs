@@ -63,6 +63,8 @@ pub(crate) enum Action {
     Pick,
     CloseGame,
     Reset,
+    /// Recompile this game to native code (gase-recomp).
+    Recompile,
     SaveState(u8),
     LoadState(u8),
     Quit,
@@ -337,6 +339,12 @@ fn pause(ui: &mut Ui<'_>, ctx: &mut Ctx<'_>) -> Action {
     }
     if ui.button("Settings") {
         action = Action::Push(Screen::Settings);
+    }
+    // Offered when gase-recomp's studio is installed, for a game that is
+    // not already running recompiled code.
+    let recompiled = ctx.game.is_some_and(|g| g.genesis.external_cpu().is_some());
+    if ctx.caps.recompile && !recompiled && ui.button("Recompile to native…") {
+        action = Action::Recompile;
     }
     if ui.button("Close game") {
         action = Action::CloseGame;

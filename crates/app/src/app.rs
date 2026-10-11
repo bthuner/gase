@@ -1085,6 +1085,12 @@ impl App {
             }
             Action::Pick => platform.request(Request::PickRom),
             Action::CloseGame => self.close_game(platform),
+            Action::Recompile => {
+                if let Some(game) = &self.game {
+                    platform.request(Request::Recompile(game.rom.clone()));
+                    self.notify("Opening gase-recomp studio…");
+                }
+            }
             Action::Reset => {
                 if let Some(game) = &mut self.game {
                     game.genesis.reset();
