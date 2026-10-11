@@ -714,8 +714,21 @@ fn capabilities(mobile: bool) -> Capabilities {
             fullscreen: true,
             debugger: true,
             keyboard: true,
+            recompile: recomp_studio().is_some(),
         }
     }
+}
+
+/// gase-recomp's studio, which turns a ROM into native code: the program
+/// in `GASE_RECOMP_STUDIO`, or `gase-recomp-studio` on the `PATH`.
+fn recomp_studio() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("GASE_RECOMP_STUDIO") {
+        return Some(path.into());
+    }
+    let name = format!("gase-recomp-studio{}", std::env::consts::EXE_SUFFIX);
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(&name))
+        .find(|p| p.is_file())
 }
 
 /// Open the sound device: 48 kHz stereo, `samples` frames per buffer
@@ -1114,6 +1127,22 @@ pub fn run_sdl(shell: Shell<'_>) -> Result<(), String> {
                 Request::PickRom => {
                     if let Some(pick) = hooks.pick_rom {
                         pick();
+                    }
+                }
+                Request::Recompile(rom) => {
+                    // The studio opens its own window, set to build this
+                    // ROM for this computer; gase keeps running.
+                    let started = recomp_studio()
+                        .ok_or_else(|| "gase-recomp studio not found".to_string())
+                        .and_then(|studio| {
+                            std::process::Command::new(&studio)
+                                .arg("--desktop")
+                                .arg(&rom)
+                                .spawn()
+                                .map_err(|e| format!("{}: {e}", studio.display()))
+                        });
+                    if let Err(e) = started {
+                        app.notify(format!("Recompile: {e}"));
                     }
                 }
             }

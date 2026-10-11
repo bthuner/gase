@@ -120,6 +120,11 @@ pub enum Request {
     /// The game stopped at a breakpoint at this 68000 address: show the
     /// debugger.
     Breakpoint(u32),
+    /// "Recompile to native…": hand the ROM (its path) to gase-recomp's
+    /// studio, which recompiles it to native code and builds a program
+    /// that is gase with the game built in (only when
+    /// [`Capabilities::recompile`]).
+    Recompile(String),
 }
 
 /// What a platform can do, so the app only offers what works.
@@ -144,6 +149,8 @@ pub struct Capabilities {
     pub debugger: bool,
     /// A keyboard is likely present (show keyboard hints).
     pub keyboard: bool,
+    /// [`Request::Recompile`] works: gase-recomp's studio is installed.
+    pub recompile: bool,
 }
 
 impl Default for Capabilities {
@@ -159,6 +166,7 @@ impl Default for Capabilities {
             fullscreen: false,
             debugger: false,
             keyboard: true,
+            recompile: false,
         }
     }
 }
