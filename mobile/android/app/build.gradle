@@ -33,8 +33,8 @@ android {
         resValue 'string', 'app_name', (project.findProperty('gaseAppName') ?: 'gase').toString()
         minSdk 21 // Android 5.0; keep equal to `api` in build-native.sh
         targetSdk 35
-        versionCode 2
-        versionName '0.2.0'
+        versionCode 3
+        versionName '0.3.0'
     }
 
     sourceSets {
