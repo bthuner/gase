@@ -9,9 +9,9 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>gase</string>
+    <string>$(GASE_APP_NAME)</string>
     <key>CFBundleName</key>
-    <string>gase</string>
+    <string>$(GASE_APP_NAME)</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>

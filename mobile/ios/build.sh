@@ -8,6 +8,11 @@
 # aarch64-apple-ios-sim, and XcodeGen. This is what CI runs
 # (.github/workflows/mobile.yml); for day-to-day work run build-sdl.sh once,
 # `xcodegen generate`, and open Gase.xcodeproj in Xcode.
+#
+# A game that embeds gase builds its own app with the same project:
+#   GASE_MOBILE_MANIFEST, GASE_MOBILE_PACKAGE   its crate (see build-rust.sh)
+#   GASE_APP_NAME   the name under the icon (default: gase)
+#   GASE_APP_ID     the bundle identifier (default: io.github.bthuner.gase)
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 build=${GASE_MOBILE_BUILD:-$here/../build}
@@ -21,6 +26,8 @@ for platform in ${PLATFORMS:-iphonesimulator iphoneos}; do
         -sdk "$platform" ARCHS=arm64 \
         SYMROOT="$build/ios/app" OBJROOT="$build/ios/app/obj" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+        GASE_APP_NAME="${GASE_APP_NAME:-gase}" \
+        PRODUCT_BUNDLE_IDENTIFIER="${GASE_APP_ID:-io.github.bthuner.gase}" \
         build
 done
 ls -d "$build"/ios/app/Release-*/gase.app

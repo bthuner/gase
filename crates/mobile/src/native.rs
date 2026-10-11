@@ -7,7 +7,8 @@
 //!    (with `dlsym` on Android, through the linker on iOS). Rust mangles
 //!    names, so the function needs `#[unsafe(no_mangle)]`, which is unsafe
 //!    because two exported symbols with the same name would clash at link
-//!    time. There is exactly one `SDL_main` in the app: this one.
+//!    time. There is exactly one `SDL_main` in the app: this one, or a game
+//!    crate's when it turns the `sdl-main` feature off.
 //! 2. **Reading `argv`.** C passes the arguments as raw pointers to
 //!    NUL-terminated strings; turning them into Rust strings trusts that
 //!    they are what C promises.
@@ -25,21 +26,37 @@ use std::ffi::{CStr, c_char, c_int};
 
 /// The entry point SDL calls (see the [crate documentation](crate)).
 ///
+/// Only with the `sdl-main` feature (the default): a game crate exports
+/// its own, see [`crate::run_game`].
+///
 /// # Safety
 ///
 /// `argv` must point to `argc` pointers, each null or pointing to a
 /// NUL-terminated string, as C's `main` receives them. SDL guarantees this
 /// on both systems (on Android it builds them from the Java `String[]` of
 /// `GaseActivity.getArguments()`; on iOS they are the process's own).
+#[cfg(feature = "sdl-main")]
 #[allow(non_snake_case)] // the name is SDL's
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SDL_main(argc: c_int, argv: *mut *mut c_char) -> c_int {
+    // SAFETY: what our caller promises is what `args` needs.
+    let args = unsafe { args(argc, argv) };
+    crate::run(&args)
+}
+
+/// `SDL_main`'s arguments as Rust strings.
+///
+/// # Safety
+///
+/// As for `SDL_main`: `argv` points to `argc` pointers, each null or
+/// pointing to a NUL-terminated string.
+pub unsafe fn args(argc: c_int, argv: *mut *mut c_char) -> Vec<String> {
     let count = if argv.is_null() {
         0
     } else {
         usize::try_from(argc).unwrap_or(0)
     };
-    let args: Vec<String> = (0..count)
+    (0..count)
         .filter_map(|i| {
             // SAFETY: `i < argc`, and the caller promises `argc` pointers.
             let arg = unsafe { *argv.add(i) };
@@ -51,8 +68,7 @@ pub unsafe extern "C" fn SDL_main(argc: c_int, argv: *mut *mut c_char) -> c_int 
                     .into_owned()
             })
         })
-        .collect();
-    crate::run(&args)
+        .collect()
 }
 
 #[cfg(target_os = "android")]

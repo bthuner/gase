@@ -4,6 +4,11 @@
 # outside Xcode, set PLATFORM_NAME=iphoneos or iphonesimulator.
 #
 #   mobile/build/ios/<platform>/libgase_mobile.a
+#
+# GASE_MOBILE_MANIFEST and GASE_MOBILE_PACKAGE choose another crate than
+# this repository's gase-mobile: a game that embeds gase (a statically
+# recompiled one) and exports its own SDL_main. The library keeps the name
+# the Xcode project links (libgase_mobile.a).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -19,6 +24,11 @@ unset SDKROOT
 # Debug app builds still get optimised Rust: an emulator in a debug build
 # is far too slow to play.
 profile=release
+manifest=${GASE_MOBILE_MANIFEST:-$repo/Cargo.toml}
+package=${GASE_MOBILE_PACKAGE:-gase-mobile}
+target_dir=${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps \
+    --manifest-path "$manifest" | sed 's/.*"target_directory":"\([^"]*\)".*/\1/')}
+lib=lib$(echo "$package" | tr - _).a
 
 libs=""
 for arch in $archs; do
@@ -28,9 +38,9 @@ for arch in $archs; do
         iphonesimulator/x86_64) triple=x86_64-apple-ios ;;
         *) echo "error: no Rust target for $platform/$arch" >&2; exit 1 ;;
     esac
-    cargo rustc --manifest-path "$repo/Cargo.toml" -p gase-mobile \
+    cargo rustc --manifest-path "$manifest" -p "$package" \
         --profile "$profile" --target "$triple" --crate-type staticlib
-    libs="$libs ${CARGO_TARGET_DIR:-$repo/target}/$triple/$profile/libgase_mobile.a"
+    libs="$libs $target_dir/$triple/$profile/$lib"
 done
 mkdir -p "$build/ios/$platform"
 # One library for all architectures (lipo merges them; with one, it copies).
