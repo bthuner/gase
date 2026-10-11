@@ -147,6 +147,16 @@ the Mega Drive's A, B, C; LB, Y, RB are X, Y, Z; Start and Back are Start
 and Mode; hold the left/right triggers to rewind/fast-forward. The D-pad
 and left stick both steer.
 
+### Recompile a game to native code
+
+With [gase-recomp](https://github.com/bthuner/gase-recomp)'s studio
+installed (`gase-recomp-studio` on the `PATH`, or its path in
+`GASE_RECOMP_STUDIO`), the pause menu offers **Recompile to native…**. The
+studio opens with the game loaded: **Build the game** translates its 68000
+code to Rust and compiles it, and **Play** starts gase again with that
+code built in instead of the interpreter. The same window builds an
+Android app of the game.
+
 ### The debugger
 
 F1 opens a second window showing the 68000 and Z80 registers and

@@ -146,8 +146,12 @@ impl Game {
             SaveType::None => String::new(),
             kind => format!(", {kind}"),
         };
+        let cpu = match self.genesis.external_cpu() {
+            Some(cpu) => format!(", 68000: {}", cpu.describe()),
+            None => String::new(),
+        };
         format!(
-            "{title} [{serial}] region {region:?}, {kib} KiB ROM{save}, checksum {checksum}",
+            "{title} [{serial}] region {region:?}, {kib} KiB ROM{save}, checksum {checksum}{cpu}",
             title = self.title,
             serial = h.serial,
             region = self.genesis.region(),

@@ -101,5 +101,8 @@ pub use app::{AUDIO_TARGET_MS, App, Pacing, Video};
 pub use canvas::{Canvas, Image, Rect};
 pub use game::{DebugRun, Game};
 pub use input::{ConsoleButton, Event, Key, Nav, PadAxis, PadButton, PointerKind, PointerPhase};
-pub use platform::{Capabilities, DirEntry, FileKey, Listing, Platform, Request};
+pub use platform::{
+    Capabilities, DirEntry, FileKey, Listing, Platform, RECOMPILE_ON_DESKTOP, RECOMPILE_ON_PHONE,
+    Request,
+};
 pub use settings::{Aspect, Settings, TouchMode};

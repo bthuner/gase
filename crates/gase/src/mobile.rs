@@ -63,6 +63,10 @@ pub fn phone_capabilities(sample_rate: u32) -> Capabilities {
         fullscreen: false,
         debugger: false,
         keyboard: false,
+        // No compiler on a phone: only an app that can ask a computer for
+        // one turns this on (see `sdl::Mobile::recompile`).
+        recompile: false,
+        recompile_label: gase_app::RECOMPILE_ON_PHONE,
     }
 }
 

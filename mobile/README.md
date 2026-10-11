@@ -9,6 +9,7 @@ how that works, then how to build, install and debug the apps.
 - [How a Rust program becomes a phone app](#how-a-rust-program-becomes-a-phone-app)
 - [Building for Android](#building-for-android)
 - [Building for iOS](#building-for-ios)
+- [A game that embeds gase](#a-game-that-embeds-gase)
 - [Trying the phone shell on a desktop](#trying-the-phone-shell-on-a-desktop)
 - [What is tested where](#what-is-tested-where)
 - [Troubleshooting](#troubleshooting)
@@ -289,6 +290,68 @@ generate`, open `mobile/ios/Gase.xcodeproj`, choose your team under
 Signing & Capabilities (a free Apple ID works for your own devices; change
 the bundle identifier if Xcode says it is taken), plug in the device and
 press Run. The Xcode console shows the app's and SDL's messages.
+
+## A game that embeds gase
+
+A statically recompiled game ([gase-recomp](https://github.com/bthuner/gase-recomp))
+is gase plus its own code for one ROM. On a phone it becomes its own app
+with these same projects. Only the Rust crate changes:
+
+* The game's crate depends on `gase-mobile` **without** its default
+  `sdl-main` feature, and exports its own `SDL_main`. That function
+  registers the game's code, then calls `gase_mobile::run_game` with the
+  ROM's bytes (`include_bytes!`). `run_game` copies the ROM into the app's
+  ROM folder once and opens it at start. The menus can still open other
+  ROMs; they run on the interpreter.
+* The build scripts take the crate to build instead of `crates/mobile`, and
+  the app's name and identifier:
+
+```sh
+# Android: one ABI is enough to try it (each ABI compiles the game again)
+gradle -p mobile/android assembleRelease -PgaseAbis=arm64-v8a \
+    -PgaseCrate=/path/to/game/mobile/Cargo.toml:my-game-mobile \
+    -PgaseAppId=io.github.me.mygame -PgaseAppName="My Game"
+
+# iOS
+GASE_MOBILE_MANIFEST=/path/to/game/mobile/Cargo.toml \
+GASE_MOBILE_PACKAGE=my-game-mobile \
+GASE_APP_NAME="My Game" GASE_APP_ID=io.github.me.mygame mobile/ios/build.sh
+```
+
+With a different identifier the game installs next to gase instead of
+replacing it. gase-recomp writes such a crate for every game it
+generates, with these commands in its `BUILD.md`.
+
+### Making an app from the phone
+
+A phone cannot compile anything, but it can ask a computer that can.
+An app's own `SDL_main` may call `gase_mobile::run_with(&args, hooks)`
+with a `Hooks { recompile: Some(…) }`: the pause menu then offers **Make
+an app of this game…**, and choosing it calls that function with the
+ROM's path and a `Notices` handle (toasts that any thread may post).
+gase-recomp's phone app ("gase JIT") uses it to find its studio on the
+local network, send the ROM, follow the build, download the APK and hand
+it to `gase_mobile::install_apk`:
+
+```text
+ Rust (any thread)                     Java (GaseActivity, UI thread)
+ install_apk(bytes)
+   writes files/builds/app.apk
+   SDL_AndroidSendMessage(0x8002)  ──►  onUnhandledMessage → installApk()
+                                          PackageInstaller session:
+                                          copy, commit(PendingIntent)
+                                   ◄──  onNewIntent(INSTALL_STATUS):
+                                          "confirm?" → the installer's window
+                                          installed / failed → a toast
+```
+
+Such an app is built with `-PgasePhoneBuilds`, which merges
+`app/src/phoneBuilds/AndroidManifest.xml` over the main one: it adds the
+`INTERNET` permission (local sockets need it too) and
+`REQUEST_INSTALL_PACKAGES`. gase's own app asks for neither, and CI
+checks that. Android asks the user, once, to allow the app to install
+apps, then asks for confirmation before each install. iOS installs apps
+only from its store, so there `install_apk` returns an error.
 
 ## Trying the phone shell on a desktop
 

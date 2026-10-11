@@ -137,6 +137,34 @@ pub struct Mobile {
     /// Trying the phone shell on a desktop (`gase --mobile`): a window of
     /// this size instead of the whole screen.
     pub window: Option<(u32, u32)>,
+    /// "Make an app of this game…" in the pause menu: called with the
+    /// ROM's path, on the main loop's thread, so it must return at once
+    /// (start a thread) and report through the [`Notices`]. gase itself
+    /// has none; gase-recomp's phone app asks its studio on the network.
+    pub recompile: Option<fn(rom: String, notices: Notices)>,
+}
+
+/// Short messages for the user from any thread, shown as the app's toasts,
+/// each replacing the one before (a phone build reports its progress this
+/// way).
+#[derive(Clone, Debug, Default)]
+pub struct Notices(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl Notices {
+    /// Show `text` (soon: the main loop picks it up at the next frame).
+    pub fn push(&self, text: impl Into<String>) {
+        self.lock().push(text.into());
+    }
+
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.lock())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 /// The platform for the app: files from [`Desktop`] or [`MobileFiles`],
@@ -700,9 +728,12 @@ fn mobile_hints() {
 }
 
 /// What the app may offer on this kind of system.
-fn capabilities(mobile: bool) -> Capabilities {
-    if mobile {
-        crate::mobile::phone_capabilities(SAMPLE_RATE)
+fn capabilities(mobile: Option<&Mobile>) -> Capabilities {
+    if let Some(mobile) = mobile {
+        Capabilities {
+            recompile: mobile.recompile.is_some(),
+            ..crate::mobile::phone_capabilities(SAMPLE_RATE)
+        }
     } else {
         Capabilities {
             sample_rate: SAMPLE_RATE,
@@ -714,8 +745,22 @@ fn capabilities(mobile: bool) -> Capabilities {
             fullscreen: true,
             debugger: true,
             keyboard: true,
+            recompile: recomp_studio().is_some(),
+            recompile_label: gase_app::RECOMPILE_ON_DESKTOP,
         }
     }
+}
+
+/// gase-recomp's studio, which turns a ROM into native code: the program
+/// in `GASE_RECOMP_STUDIO`, or `gase-recomp-studio` on the `PATH`.
+fn recomp_studio() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("GASE_RECOMP_STUDIO") {
+        return Some(path.into());
+    }
+    let name = format!("gase-recomp-studio{}", std::env::consts::EXE_SUFFIX);
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(&name))
+        .find(|p| p.is_file())
 }
 
 /// Open the sound device: 48 kHz stereo, `samples` frames per buffer
@@ -845,7 +890,7 @@ pub fn run_sdl(shell: Shell<'_>) -> Result<(), String> {
         requests: Vec::new(),
         sdl_log: is_mobile,
     };
-    let mut app = App::new(&mut platform, capabilities(is_mobile));
+    let mut app = App::new(&mut platform, capabilities(mobile.as_ref()));
     if let Some(options) = options {
         crate::cli::apply_overrides(&mut app, options);
     }
@@ -962,6 +1007,7 @@ pub fn run_sdl(shell: Shell<'_>) -> Result<(), String> {
         app.handle(&mut platform, Event::OpenRom { path });
     }
     let hooks = mobile.unwrap_or_default();
+    let notices = Notices::default();
 
     let mut events = sdl.event_pump()?;
     let mut pads: Vec<GameController> = Vec::new();
@@ -1081,6 +1127,9 @@ pub fn run_sdl(shell: Shell<'_>) -> Result<(), String> {
         }
 
         // --- 3. Requests -----------------------------------------------------------------
+        for text in notices.take() {
+            app.notify(text);
+        }
         for request in std::mem::take(&mut platform.requests) {
             match request {
                 Request::SetTitle(title) => canvas
@@ -1114,6 +1163,27 @@ pub fn run_sdl(shell: Shell<'_>) -> Result<(), String> {
                 Request::PickRom => {
                     if let Some(pick) = hooks.pick_rom {
                         pick();
+                    }
+                }
+                Request::Recompile(rom) if is_mobile => match hooks.recompile {
+                    Some(recompile) => recompile(rom, notices.clone()),
+                    None => app.notify("No way to make an app here"),
+                },
+                Request::Recompile(rom) => {
+                    // The studio opens its own window, set to build this
+                    // ROM for this computer; gase keeps running.
+                    app.notify("Opening gase-recomp studio…");
+                    let started = recomp_studio()
+                        .ok_or_else(|| "gase-recomp studio not found".to_string())
+                        .and_then(|studio| {
+                            std::process::Command::new(&studio)
+                                .arg("--desktop")
+                                .arg(&rom)
+                                .spawn()
+                                .map_err(|e| format!("{}: {e}", studio.display()))
+                        });
+                    if let Err(e) = started {
+                        app.notify(format!("Recompile: {e}"));
                     }
                 }
             }
@@ -1219,8 +1289,34 @@ mod tests {
 
     #[test]
     fn phones_offer_the_picker_not_the_browser() {
-        let caps = capabilities(true);
+        let caps = capabilities(Some(&Mobile::default()));
         assert!(caps.touch_screen && caps.rom_picker);
         assert!(!caps.file_browser && !caps.can_quit && !caps.debugger);
+        assert!(!caps.recompile, "no compiler on a phone");
+    }
+
+    #[test]
+    fn a_phone_app_with_a_recompile_hook_offers_to_make_an_app() {
+        let mobile = Mobile {
+            recompile: Some(|_, _| {}),
+            ..Mobile::default()
+        };
+        let caps = capabilities(Some(&mobile));
+        assert!(caps.recompile);
+        assert_eq!(caps.recompile_label, gase_app::RECOMPILE_ON_PHONE);
+    }
+
+    #[test]
+    fn notices_cross_threads_in_order() {
+        let notices = Notices::default();
+        let sender = notices.clone();
+        std::thread::spawn(move || {
+            sender.push("Looking for the studio…");
+            sender.push("Building");
+        })
+        .join()
+        .unwrap();
+        assert_eq!(notices.take(), ["Looking for the studio…", "Building"]);
+        assert!(notices.take().is_empty());
     }
 }

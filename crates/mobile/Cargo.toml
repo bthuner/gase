@@ -21,6 +21,13 @@ publish = false
 # tests it on any desktop without linking anything.
 crate-type = ["rlib"]
 
+[features]
+default = ["sdl-main"]
+# Export `SDL_main`, the app's entry point. A game crate that embeds gase
+# (a recompiled game) turns this off and exports its own, which registers
+# its code and then calls `gase_mobile::run_game`.
+sdl-main = []
+
 [dependencies]
 gase.workspace = true
 sdl2 = "0.37"

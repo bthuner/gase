@@ -30,6 +30,9 @@ targets:
       base:
         PRODUCT_NAME: gase
         PRODUCT_BUNDLE_IDENTIFIER: io.github.bthuner.gase
+        # The name under the icon. A game that embeds gase overrides it and
+        # PRODUCT_BUNDLE_IDENTIFIER (see build.sh).
+        GASE_APP_NAME: gase
         INFOPLIST_FILE: Info.plist
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"

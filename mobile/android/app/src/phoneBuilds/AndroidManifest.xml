@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Merged over src/main/AndroidManifest.xml when the app is built with
+    -PgasePhoneBuilds (gase-recomp's phone app, which asks a computer on the
+    network to make an app of a game, then installs it):
+
+    * INTERNET: talk to the studio on the local network (sockets need it,
+      even when nothing leaves the network);
+    * REQUEST_INSTALL_PACKAGES: hand the APK it received to the system's
+      package installer. Android still asks the user, once, to allow this
+      app to install apps, and then to confirm each install.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>

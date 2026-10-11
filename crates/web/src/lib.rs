@@ -180,7 +180,12 @@ pub fn encode_request(request: &Request) -> Option<(u32, u32, &str)> {
         Request::PickRom => (REQUEST_PICK_ROM, 0, ""),
         Request::SetFullscreen(on) => (REQUEST_FULLSCREEN, u32::from(*on), ""),
         Request::SetTitle(title) => (REQUEST_TITLE, 0, title.as_str()),
-        Request::Quit | Request::ToggleDebugger | Request::Breakpoint(_) => return None,
+        Request::Quit
+        | Request::ToggleDebugger
+        | Request::Breakpoint(_)
+        | Request::Recompile(_) => {
+            return None;
+        }
     })
 }
 
@@ -205,6 +210,9 @@ pub fn capabilities(sample_rate: u32, bits: u32) -> Capabilities {
         fullscreen: bits & CAP_FULLSCREEN != 0,
         debugger: false,
         keyboard: bits & CAP_KEYBOARD != 0,
+        // A browser cannot run a compiler.
+        recompile: false,
+        recompile_label: gase_app::RECOMPILE_ON_DESKTOP,
     }
 }
 

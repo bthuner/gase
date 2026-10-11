@@ -6,7 +6,49 @@ All notable changes to gase are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-11
+
+Natively recompiled games: gase becomes the shell for games that
+[gase-recomp](https://github.com/bthuner/gase-recomp) turned into native
+code, on the desktop and on phones, and for its JIT. Save states from 0.2.0
+still load (the format is unchanged).
+
 ### Added
+- **Recompile to native…** in the pause menu, on desktops where
+  gase-recomp's studio is installed (`gase-recomp-studio` on the `PATH`,
+  or `GASE_RECOMP_STUDIO`): it opens the studio set to build the game for
+  this computer. `Capabilities::recompile` and `Request::Recompile` carry
+  it; phones and the browser never offer it.
+- `external::register_any`: one external CPU for every ROM that has none
+  of its own, such as gase-recomp's JIT. A ROM's own CPU (a statically
+  recompiled game) still wins. The Android and iOS build scripts build the
+  crate's library only (`--lib`), so a game crate may also have programs.
+- **Statically recompiled games** (`gase_core::system::external`): a
+  console can be driven by an external 68000, such as a game recompiled to
+  native code by [gase-recomp](https://github.com/bthuner/gase-recomp).
+  The external CPU runs freely and the console catches up at its poll
+  points (an inverted form of the same scheduler, checked against the
+  normal one by running the interpreter through it). The interpreter's
+  state stays the CPU state between frames, so save states, rewind and the
+  debugger keep working. A recompiled game registers its code for its
+  ROM's CRC-32 and calls `gase::run_command_line`: every frontend then runs
+  it like any other game.
+- **Make an app of this game…** on phones, for apps that bring a way to
+  build one: `gase_mobile::run_with` takes `Hooks { recompile }`, and
+  `gase::sdl::Notices` carries toasts from any thread.
+  `gase_mobile::install_apk` hands an APK to Android's package installer
+  (`GaseActivity` grows a `PackageInstaller` session); apps built with
+  `-PgasePhoneBuilds` ask for the `INTERNET` and
+  `REQUEST_INSTALL_PACKAGES` permissions, gase's own app still asks for
+  none. `ExternalCpu::ahead_of_time` tells a JIT from a recompiled game, so
+  a game run by a JIT can still be recompiled.
+- **Recompiled games on phones**: `gase-mobile` gets an `sdl-main` feature
+  (on by default) and `run_game`, so a game crate can export its own
+  `SDL_main`, register its code and ship its ROM inside the app. The
+  Android and iOS builds take the crate to build (`-PgaseCrate`,
+  `GASE_MOBILE_MANIFEST`/`GASE_MOBILE_PACKAGE`) and the app's name and
+  identifier (`-PgaseAppId`/`-PgaseAppName`, `GASE_APP_ID`/`GASE_APP_NAME`),
+  so the game installs as its own app next to gase.
 - Release files for every platform: a `Release` workflow builds Linux,
   Windows and macOS (universal) programs with SDL2 linked in, the browser
   version, the Android APK and an unsigned iOS `.ipa`, and attaches them
@@ -133,5 +175,6 @@ The first release: a complete, tested Mega Drive / Genesis emulator.
   build) and weekly runs of the CPU test vectors and the test-ROM frame-hash
   regression suite.
 
+[0.3.0]: https://github.com/bthuner/gase/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bthuner/gase/releases/tag/v0.2.0
 [0.1.0]: https://github.com/bthuner/gase/releases/tag/v0.1.0

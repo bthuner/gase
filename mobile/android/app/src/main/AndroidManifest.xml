@@ -22,7 +22,8 @@
     <!-- No permissions at all: ROMs come through the system's document
          picker (the user grants access to one file at a time), saves stay in
          the app's own folder. SDL's template asks for VIBRATE (for rumble),
-         which gase does not use. -->
+         which gase does not use. (An app built with -PgasePhoneBuilds adds
+         two, see src/phoneBuilds/AndroidManifest.xml.) -->
 
     <application
         android:label="@string/app_name"
