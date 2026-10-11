@@ -14,7 +14,8 @@ All notable changes to gase are listed here. The format follows
   it; phones and the browser never offer it.
 - `external::register_any`: one external CPU for every ROM that has none
   of its own, such as gase-recomp's JIT. A ROM's own CPU (a statically
-  recompiled game) still wins.
+  recompiled game) still wins. The Android and iOS build scripts build the
+  crate's library only (`--lib`), so a game crate may also have programs.
 - **Statically recompiled games** (`gase_core::system::external`): a
   console can be driven by an external 68000, such as a game recompiled to
   native code by [gase-recomp](https://github.com/bthuner/gase-recomp).
