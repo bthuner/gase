@@ -6,6 +6,13 @@ All notable changes to gase are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-11
+
+Natively recompiled games: gase becomes the shell for games that
+[gase-recomp](https://github.com/bthuner/gase-recomp) turned into native
+code, on the desktop and on phones, and for its JIT. Save states from 0.2.0
+still load (the format is unchanged).
+
 ### Added
 - **Recompile to native…** in the pause menu, on desktops where
   gase-recomp's studio is installed (`gase-recomp-studio` on the `PATH`,
@@ -168,5 +175,6 @@ The first release: a complete, tested Mega Drive / Genesis emulator.
   build) and weekly runs of the CPU test vectors and the test-ROM frame-hash
   regression suite.
 
+[0.3.0]: https://github.com/bthuner/gase/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bthuner/gase/releases/tag/v0.2.0
 [0.1.0]: https://github.com/bthuner/gase/releases/tag/v0.1.0
