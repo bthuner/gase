@@ -1087,8 +1087,9 @@ impl App {
             Action::CloseGame => self.close_game(platform),
             Action::Recompile => {
                 if let Some(game) = &self.game {
+                    // The platform says what happens next (it knows where
+                    // the studio is).
                     platform.request(Request::Recompile(game.rom.clone()));
-                    self.notify("Opening gase-recomp studio…");
                 }
             }
             Action::Reset => {

@@ -322,6 +322,37 @@ With a different identifier the game installs next to gase instead of
 replacing it. gase-recomp writes such a crate for every game it
 generates, with these commands in its `BUILD.md`.
 
+### Making an app from the phone
+
+A phone cannot compile anything, but it can ask a computer that can.
+An app's own `SDL_main` may call `gase_mobile::run_with(&args, hooks)`
+with a `Hooks { recompile: Some(…) }`: the pause menu then offers **Make
+an app of this game…**, and choosing it calls that function with the
+ROM's path and a `Notices` handle (toasts that any thread may post).
+gase-recomp's phone app ("gase JIT") uses it to find its studio on the
+local network, send the ROM, follow the build, download the APK and hand
+it to `gase_mobile::install_apk`:
+
+```text
+ Rust (any thread)                     Java (GaseActivity, UI thread)
+ install_apk(bytes)
+   writes files/builds/app.apk
+   SDL_AndroidSendMessage(0x8002)  ──►  onUnhandledMessage → installApk()
+                                          PackageInstaller session:
+                                          copy, commit(PendingIntent)
+                                   ◄──  onNewIntent(INSTALL_STATUS):
+                                          "confirm?" → the installer's window
+                                          installed / failed → a toast
+```
+
+Such an app is built with `-PgasePhoneBuilds`, which merges
+`app/src/phoneBuilds/AndroidManifest.xml` over the main one: it adds the
+`INTERNET` permission (local sockets need it too) and
+`REQUEST_INSTALL_PACKAGES`. gase's own app asks for neither, and CI
+checks that. Android asks the user, once, to allow the app to install
+apps, then asks for confirmation before each install. iOS installs apps
+only from its store, so there `install_apk` returns an error.
+
 ## Trying the phone shell on a desktop
 
 The phone shell runs on a desktop too (it is the same code), which is the

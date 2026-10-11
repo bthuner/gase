@@ -48,6 +48,14 @@ pub trait ExternalCpu: fmt::Debug + Send {
     fn describe(&self) -> String {
         "external 68000".to_string()
     }
+
+    /// Whether this CPU runs one game recompiled ahead of time (the
+    /// default), rather than compiling any game as it runs (a JIT, see
+    /// [`register_any`]). The menus offer to recompile a game, or to make
+    /// an app of it, only when it is not already recompiled.
+    fn ahead_of_time(&self) -> bool {
+        true
+    }
 }
 
 impl Clone for Box<dyn ExternalCpu> {

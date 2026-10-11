@@ -340,10 +340,14 @@ fn pause(ui: &mut Ui<'_>, ctx: &mut Ctx<'_>) -> Action {
     if ui.button("Settings") {
         action = Action::Push(Screen::Settings);
     }
-    // Offered when gase-recomp's studio is installed, for a game that is
-    // not already running recompiled code.
-    let recompiled = ctx.game.is_some_and(|g| g.genesis.external_cpu().is_some());
-    if ctx.caps.recompile && !recompiled && ui.button("Recompile to native…") {
+    // Offered when gase-recomp's studio can be reached, for a game that is
+    // not already recompiled (one run by a JIT still can be).
+    let recompiled = ctx.game.is_some_and(|g| {
+        g.genesis
+            .external_cpu()
+            .is_some_and(|cpu| cpu.ahead_of_time())
+    });
+    if ctx.caps.recompile && !recompiled && ui.button(ctx.caps.recompile_label) {
         action = Action::Recompile;
     }
     if ui.button("Close game") {

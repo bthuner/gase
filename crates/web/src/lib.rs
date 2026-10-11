@@ -212,6 +212,7 @@ pub fn capabilities(sample_rate: u32, bits: u32) -> Capabilities {
         keyboard: bits & CAP_KEYBOARD != 0,
         // A browser cannot run a compiler.
         recompile: false,
+        recompile_label: gase_app::RECOMPILE_ON_DESKTOP,
     }
 }
 
