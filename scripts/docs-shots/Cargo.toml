@@ -4,7 +4,7 @@
 # [workspace] table) and is only built by that script.
 [package]
 name = "gase-docs-shots"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 publish = false
 
