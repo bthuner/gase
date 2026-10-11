@@ -54,7 +54,11 @@
 
 mod native;
 
+#[cfg(feature = "sdl-main")]
 pub use native::SDL_main;
+pub use native::args;
+
+use std::path::PathBuf;
 
 use gase::sdl::{Mobile, Shell, run_sdl};
 
@@ -71,16 +75,84 @@ fn rom_argument(args: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// Run the app (called by [`SDL_main`]); returns the process's exit status.
+/// Run the app (called by `SDL_main`); returns the process's exit status.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
+    run_opening(rom_argument(args))
+}
+
+/// Run a game shipped inside the app: a statically recompiled game, which
+/// brings its own `SDL_main` (with this crate's `sdl-main` feature off):
+///
+/// ```ignore
+/// #[unsafe(no_mangle)]
+/// pub unsafe extern "C" fn SDL_main(argc: c_int, argv: *mut *mut c_char) -> c_int {
+///     gase_recomp_runtime::register(recomp::ROM_CRC32, recomp::cpu);
+///     let args = unsafe { gase_mobile::args(argc, argv) };
+///     gase_mobile::run_game(&args, "My Game", include_bytes!("../../rom.bin"))
+/// }
+/// ```
+///
+/// The ROM is copied once into the app's ROM folder as `<name>.bin`, and
+/// opened at start (unless the app was launched to open another file).
+/// The menus still open any other ROM.
+#[must_use]
+pub fn run_game(args: &[String], name: &str, rom: &[u8]) -> i32 {
+    let open = rom_argument(args).or_else(|| match install_rom(name, rom) {
+        Ok(path) => Some(path.to_string_lossy().into_owned()),
+        Err(e) => {
+            sdl2::log::log(&format!("gase: cannot install {name}: {e}"));
+            None
+        }
+    });
+    run_opening(open)
+}
+
+/// Copy `rom` to `<app folder>/roms/<name>.bin`, unless the same is there.
+fn install_rom(name: &str, rom: &[u8]) -> Result<PathBuf, String> {
+    let data = sdl2::filesystem::pref_path("", "gase").map_err(|e| e.to_string())?;
+    let dir = PathBuf::from(data).join("roms");
+    let path = dir.join(format!("{}.bin", file_name(name)));
+    if std::fs::read(&path).is_ok_and(|have| have == rom) {
+        return Ok(path);
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // A temporary name, then a rename: an app killed mid-copy leaves no
+    // half-written ROM.
+    let part = path.with_extension("part");
+    std::fs::write(&part, rom).map_err(|e| e.to_string())?;
+    std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// A game title as a file name: no path separators or reserved characters.
+fn file_name(title: &str) -> String {
+    let name: String = title
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || " -_().".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let name = name.trim().trim_matches('.');
+    if name.is_empty() {
+        "game".into()
+    } else {
+        name.into()
+    }
+}
+
+fn run_opening(open: Option<String>) -> i32 {
     // A panic message on stderr is lost on a phone; send it to the system
     // log (`adb logcat`, Xcode's console) where it can be found.
     std::panic::set_hook(Box::new(|info| {
         sdl2::log::log(&format!("gase panicked: {info}"));
     }));
     let mobile = Mobile {
-        open: rom_argument(args),
+        open,
         pick_rom: native::PICK_ROM,
         back_at_home: native::BACK_AT_HOME,
         window: None,
@@ -115,6 +187,14 @@ mod tests {
             "only option-looking words are skipped"
         );
         assert_eq!(rom_argument(&args(&["app", "", "-x"])), None);
+    }
+
+    #[test]
+    fn game_titles_become_file_names() {
+        assert_eq!(file_name("ALADDIN"), "ALADDIN");
+        assert_eq!(file_name("Sonic / Knuckles: 2"), "Sonic _ Knuckles_ 2");
+        assert_eq!(file_name("../.."), "_", "no way out of the folder");
+        assert_eq!(file_name("  "), "game");
     }
 
     #[test]

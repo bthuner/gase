@@ -14,6 +14,11 @@
 #   ABIS              which ABIs (default: "arm64-v8a armeabi-v7a x86_64")
 #   CARGO_PROFILE     release (default) or dev; release is what you want on
 #                     a phone: emulation in a debug build is far too slow
+#   GASE_MOBILE_MANIFEST, GASE_MOBILE_PACKAGE
+#                     the crate that becomes libmain.so (default: this
+#                     repository's gase-mobile). A game that embeds gase, such
+#                     as a statically recompiled one, points these at its own
+#                     crate, which exports SDL_main (see crates/mobile).
 #
 # Why no cargo-ndk? It only sets the variables below; spelling them out
 # shows what cross-compiling Rust for Android takes: a target triple
@@ -31,6 +36,12 @@ profile=${CARGO_PROFILE:-release}
 # app/build.gradle.
 api=21
 build=${GASE_MOBILE_BUILD:-$repo/mobile/build}
+manifest=${GASE_MOBILE_MANIFEST:-$repo/Cargo.toml}
+package=${GASE_MOBILE_PACKAGE:-gase-mobile}
+# Where Cargo puts that crate's output (its workspace's target folder).
+target_dir=${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps \
+    --manifest-path "$manifest" | sed 's/.*"target_directory":"\([^"]*\)".*/\1/')}
+lib=lib$(echo "$package" | tr - _).so
 
 case "$(uname -s)" in
     Linux) host=linux-x86_64 ;;
@@ -76,11 +87,10 @@ for abi in $abis; do
     var=$(echo "$triple" | tr 'a-z-' 'A-Z_')
     env "CARGO_TARGET_${var}_LINKER=$toolchain/$clang$api-clang" \
         "CARGO_TARGET_${var}_RUSTFLAGS=-L native=$sdl_build -C link-arg=-Wl,-z,max-page-size=16384" \
-        cargo rustc --manifest-path "$repo/Cargo.toml" -p gase-mobile \
+        cargo rustc --manifest-path "$manifest" -p "$package" \
         --profile "$profile" --target "$triple" --crate-type cdylib >&2
-    target_dir=${CARGO_TARGET_DIR:-$repo/target}
     dir=$profile
     [ "$profile" = dev ] && dir=debug
-    cp "$target_dir/$triple/$dir/libgase_mobile.so" "$out/$abi/libmain.so"
+    cp "$target_dir/$triple/$dir/$lib" "$out/$abi/libmain.so"
 done
 echo "Native libraries in $out" >&2

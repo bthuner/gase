@@ -17,6 +17,13 @@ All notable changes to gase are listed here. The format follows
   debugger keep working. A recompiled game registers its code for its
   ROM's CRC-32 and calls `gase::run_command_line`: every frontend then runs
   it like any other game.
+- **Recompiled games on phones**: `gase-mobile` gets an `sdl-main` feature
+  (on by default) and `run_game`, so a game crate can export its own
+  `SDL_main`, register its code and ship its ROM inside the app. The
+  Android and iOS builds take the crate to build (`-PgaseCrate`,
+  `GASE_MOBILE_MANIFEST`/`GASE_MOBILE_PACKAGE`) and the app's name and
+  identifier (`-PgaseAppId`/`-PgaseAppName`, `GASE_APP_ID`/`GASE_APP_NAME`),
+  so the game installs as its own app next to gase.
 - Release files for every platform: a `Release` workflow builds Linux,
   Windows and macOS (universal) programs with SDL2 linked in, the browser
   version, the Android APK and an unsigned iOS `.ipa`, and attaches them
