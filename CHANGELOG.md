@@ -6,6 +6,15 @@ All notable changes to gase are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-11
+
+### Changed
+- **The Android project brings its own Gradle**: a Gradle wrapper
+  (`mobile/android/gradlew`) pinned to Gradle 8.10.2, with its SHA-256.
+  Build with `./gradlew` instead of `gradle`: the installed Gradle, any
+  version or none, no longer matters (Gradle 9 cannot run the Android
+  Gradle plugin 8.7). CI builds with the wrapper too.
+
 ## [0.3.0] - 2026-10-11
 
 Natively recompiled games: gase becomes the shell for games that
@@ -175,6 +184,7 @@ The first release: a complete, tested Mega Drive / Genesis emulator.
   build) and weekly runs of the CPU test vectors and the test-ROM frame-hash
   regression suite.
 
+[0.3.1]: https://github.com/bthuner/gase/releases/tag/v0.3.1
 [0.3.0]: https://github.com/bthuner/gase/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bthuner/gase/releases/tag/v0.2.0
 [0.1.0]: https://github.com/bthuner/gase/releases/tag/v0.1.0

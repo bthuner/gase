@@ -187,8 +187,12 @@ silent switch (SDL's default "solo ambient" audio session).
   "NDK (Side by side)", tick "Show package details"), or on the command
   line: `sdkmanager "platforms;android-35" "ndk;27.2.12479018"`.
 * CMake 3.16+ on the `PATH` (to build SDL2), and `curl`.
-* Gradle 8.9 or newer (`gradle` on the `PATH`; the repository has no Gradle
-  wrapper jar). Android Studio brings its own.
+* No Gradle: the project brings its own, the *Gradle wrapper*
+  (`mobile/android/gradlew`). The first run downloads the Gradle version
+  written in `gradle/wrapper/gradle-wrapper.properties` (8.10.2, which the
+  Android Gradle plugin 8.7 needs), checks its SHA-256 and keeps it in
+  `~/.gradle/wrapper/`. Whatever Gradle is installed, or none, the build
+  uses that one. Android Studio uses it too.
 * Linux or macOS (on Windows, use WSL): the native build is a shell
   script.
 
@@ -199,9 +203,9 @@ Set `ANDROID_HOME` (or write `sdk.dir=/path/to/sdk` into
 
 ```sh
 cd mobile/android
-gradle assembleDebug                          # app/build/outputs/apk/debug/app-debug.apk
-gradle installDebug                           # onto the phone or emulator adb sees
-gradle assembleDebug -PgaseAbis=arm64-v8a     # only one ABI: much faster while developing
+./gradlew assembleDebug                       # app/build/outputs/apk/debug/app-debug.apk
+./gradlew installDebug                        # onto the phone or emulator adb sees
+./gradlew assembleDebug -PgaseAbis=arm64-v8a  # only one ABI: much faster while developing
 ```
 
 Or open `mobile/android` in Android Studio and press Run.
@@ -230,7 +234,7 @@ always have the same version. The Rust code is always built optimised
 (`CARGO_PROFILE=release`), also for debug APKs: an emulator built without
 optimisation is far too slow to play.
 
-`gradle assembleRelease` makes an APK signed with the debug key
+`./gradlew assembleRelease` makes an APK signed with the debug key
 (installable, not publishable); for a store, configure your own
 `signingConfig`.
 
@@ -308,7 +312,7 @@ with these same projects. Only the Rust crate changes:
 
 ```sh
 # Android: one ABI is enough to try it (each ABI compiles the game again)
-gradle -p mobile/android assembleRelease -PgaseAbis=arm64-v8a \
+mobile/android/gradlew -p mobile/android assembleRelease -PgaseAbis=arm64-v8a \
     -PgaseCrate=/path/to/game/mobile/Cargo.toml:my-game-mobile \
     -PgaseAppId=io.github.me.mygame -PgaseAppName="My Game"
 
@@ -397,7 +401,7 @@ same source release) even lets you send the lifecycle events with
 * **The app closes at once on Android**: `adb logcat -s SDL SDL/APP`.
   `dlopen failed: library "libmain.so" not found` means the native build
   did not run (Gradle's `buildNative`); `cannot locate symbol` means a
-  `libSDL2.so` and `libmain.so` from different builds, run `gradle clean`.
+  `libSDL2.so` and `libmain.so` from different builds, run `./gradlew clean`.
 * **SHA-256 mismatch** in `fetch-sdl.sh`: the download is damaged or
   someone changed the version without the checksum; delete `mobile/build/`
   and try again.
